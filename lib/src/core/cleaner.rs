@@ -1,21 +1,18 @@
 use crate::config::settings::{CleaningMode, Settings};
 use crate::core::file_utils::{self, FileInfo};
-use crate::core::progressor::{Progress, ProgressTracker, ProgressReporter};
+use crate::core::progressor::{Progress, ProgressTracker, ProgressReporter, ProgressCallback};
 use crate::core::scanner::ScanResult;
 use crate::errors::{Error, Result};
 
 /// 文件清理器
-pub struct FileCleaner<F> {
+pub struct FileCleaner {
     settings: Settings,
     pub freed_space: u64,
     pub files_deleted: usize,
-    progress_callback: Option<ProgressTracker<F>>,
+    progress_callback: Option<ProgressTracker>,
 }
 
-impl<F> FileCleaner<F>
-where
-    F: Fn(&Progress) + Send + Sync + 'static,
-{
+impl FileCleaner {
     /// 创建新的文件清理器
     pub fn new(settings: Settings) -> Self {
         FileCleaner {
@@ -27,7 +24,7 @@ where
     }
 
     /// 设置进度回调函数
-    pub fn with_progress_callback(mut self, callback: F) -> Self {
+    pub fn with_progress_callback(mut self, callback: impl ProgressCallback + 'static) -> Self {
         self.progress_callback = Some(ProgressTracker::new(Progress::new(), callback));
         self
     }

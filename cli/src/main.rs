@@ -2,7 +2,8 @@ use clap::{Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
 use lib::config::ConfigManager;
 use lib::core::scanner::{FileScanner, ScanResult};
-use lib::core::cleaner::{FileCleaner};
+use lib::core::cleaner::FileCleaner;
+use lib::core::progressor::Progress;
 
 /// 微信缓存清理工具
 #[derive(Parser)]
@@ -75,7 +76,7 @@ fn scan_files(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
     // 创建扫描器并设置进度回调
     let pb_clone = pb.clone();
     let mut scanner = FileScanner::new(settings)
-        .with_progress_callback(move |progress| {
+        .with_progress_callback(move |progress: &Progress| {
             if progress.is_completed() {
                 pb_clone.finish_with_message(progress.display(|_,_,f| -> String {format!("{}: 完成!", f)}));
             } else {
@@ -157,7 +158,7 @@ fn clean_files(mode: &str, _verbose: bool) -> Result<(), Box<dyn std::error::Err
     
     let pb_clone = pb.clone();
     let mut cleaner = FileCleaner::new(settings.clone())
-        .with_progress_callback(move |progress| {
+        .with_progress_callback(move |progress: &Progress| {
             if progress.is_completed() {
                 pb_clone.set_message(format!("已清理完成"));
             } else {
@@ -165,7 +166,7 @@ fn clean_files(mode: &str, _verbose: bool) -> Result<(), Box<dyn std::error::Err
                     if total > 0 {
                         format!("{}: {}/{}", msg, curr, total)
                     } else {
-                        msg
+                        msg.to_string()
                     }
                 }));
             }

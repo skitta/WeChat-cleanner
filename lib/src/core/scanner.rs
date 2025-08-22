@@ -1,7 +1,7 @@
 use crate::config::settings::Settings;
 use crate::core::file_utils::{FileInfo, FileInfosExt, WechatCacheResolver};
 use crate::errors::{Error, Result};
-use crate::core::progressor::{Progress, ProgressTracker, ProgressReporter};
+use crate::core::progressor::{Progress, ProgressTracker, ProgressReporter, ProgressCallback};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -99,25 +99,22 @@ impl ScanResult {
 }
 
 /// 文件扫描器
-pub struct FileScanner<F> {
+pub struct FileScanner {
     settings: Settings,
-    progress_tracker: Option<ProgressTracker<F>>,
+    progress_tracker: Option<ProgressTracker>,
 }
 
-impl<F> FileScanner<F>
-where 
-    F: Fn(&Progress) + Send + Sync + 'static,
-{
+impl FileScanner {
     /// 创建新的文件扫描器
     pub fn new(settings: Settings) -> Self {
         FileScanner {
             settings,
             progress_tracker: None,
-
         }
     }
 
-    pub fn with_progress_callback(mut self, callback: F) -> Self {
+    /// 设置进度回调
+    pub fn with_progress_callback(mut self, callback: impl ProgressCallback + 'static) -> Self {
         self.progress_tracker = Some(ProgressTracker::new(
             Progress::new(),
             callback,

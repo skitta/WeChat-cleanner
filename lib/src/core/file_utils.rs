@@ -67,13 +67,13 @@ pub trait FileInfosExt {
     where
         Self: Sized,
     {
-        self.calculate_hashes_with_callback(|_,| {})
+        self.calculate_hashes_with_callback(|_| {})
     }
     
     fn calculate_hashes_with_callback<F>(self, callback: F) -> Self
     where
         Self: Sized,
-        F: Fn(&Progress) + Sync + Send + Copy + 'static;
+        F: Fn(&Progress) + Sync + Send + 'static;
     
     fn group_by_hash(self) -> HashMap<String, Vec<FileInfo>>
     where
@@ -85,13 +85,13 @@ pub trait FileInfosExt {
     fn group_by_hash_with_callback<F>(self, callback: F) -> HashMap<String, Vec<FileInfo>>
     where
         Self: Sized,
-        F: Fn(&Progress) + Sync + Send + Copy + 'static;
+        F: Fn(&Progress) + Sync + Send + 'static;
 }
 
 impl FileInfosExt for Vec<FileInfo> {
     fn calculate_hashes_with_callback<F>(mut self, callback: F) -> Self
     where 
-    F: Fn(&Progress) + Sync + Send + Copy + 'static,
+    F: Fn(&Progress) + Sync + Send + 'static,
     {
         let total = self.len();
         let mut progress = ProgressTracker::new(Progress::new(), callback);
@@ -109,7 +109,7 @@ impl FileInfosExt for Vec<FileInfo> {
 
     fn group_by_hash_with_callback<F>(self, callback: F) -> HashMap<String, Vec<FileInfo>>
     where
-        F: Fn(&Progress) + Sync + Send + Copy + 'static,
+        F: Fn(&Progress) + Sync + Send + 'static,
     {
         let total = self.len();
         let mut progress = ProgressTracker::new(Progress::new(), callback);
