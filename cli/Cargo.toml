@@ -1,0 +1,9 @@
+[package]
+name = "cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+lib = { path = "../lib", version = "0.1.0" }
+clap = { version = "4.0", features = ["derive"] }
+indicatif = "0.17.8"
