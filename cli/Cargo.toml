@@ -1,9 +1,12 @@
 [package]
-name = "cli"
+name = "wechat-cleaner"
 version = "0.1.0"
 edition = "2024"
+description = "微信缓存清理工具命令行界面"
+authors = ["skitta <skitta@qq.com>"]
+license = "MIT OR Apache-2.0"
 
 [dependencies]
-lib = { path = "../lib", version = "0.1.0" }
-clap = { version = "4.0", features = ["derive"] }
-indicatif = "0.17.8"
+lib= { path = "../lib", version = "0.1.0" }
+clap = { version = "4.0", features = ["derive", "color", "suggestions"] }
+indicatif = { version = "0.17.8", features = ["rayon"] }

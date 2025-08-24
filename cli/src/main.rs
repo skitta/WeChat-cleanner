@@ -1,9 +1,9 @@
 use clap::{Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
-use lib::config::ConfigManager;
-use lib::core::scanner::{FileScanner, ScanResult};
-use lib::core::cleaner::FileCleaner;
-use lib::core::progressor::Progress;
+use wechat_cleaner::config::ConfigManager;
+use wechat_cleaner::core::scanner::{FileScanner, ScanResult};
+use wechat_cleaner::core::cleaner::FileCleaner;
+use wechat_cleaner::core::progressor::Progress;
 
 /// 微信缓存清理工具
 #[derive(Parser)]
@@ -122,11 +122,11 @@ fn clean_files(mode: &str, _verbose: bool) -> Result<(), Box<dyn std::error::Err
     
     // 设置清理模式
     settings.cleaning.default_mode = match mode.to_lowercase().as_str() {
-        "auto" => lib::config::settings::CleaningMode::Auto,
-        "smart" => lib::config::settings::CleaningMode::Smart,
+        "auto" => wechat_cleaner::config::settings::CleaningMode::Auto,
+        "smart" => wechat_cleaner::config::settings::CleaningMode::Smart,
         _ => {
             eprintln!("无效的清理模式: {}，使用默认的 smart 模式", mode);
-            lib::config::settings::CleaningMode::Smart
+            wechat_cleaner::config::settings::CleaningMode::Smart
         }
     };
     

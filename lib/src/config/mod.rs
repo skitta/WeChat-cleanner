@@ -2,13 +2,32 @@
 pub mod settings;
 
 use crate::errors::{Error, Result};
-use settings::Settings;
+use settings::{Settings, Merge};
 use std::path::PathBuf;
 
 /// 配置管理器
 pub struct ConfigManager {
     settings: Settings,
     config_path: Option<PathBuf>,
+    /// 配置加载历史，用于追踪配置来源
+    config_sources: Vec<ConfigSource>,
+}
+
+/// 配置来源信息
+#[derive(Debug, Clone)]
+pub struct ConfigSource {
+    pub path: PathBuf,
+    pub source_type: ConfigSourceType,
+    pub loaded_at: std::time::SystemTime,
+}
+
+/// 配置来源类型
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConfigSourceType {
+    /// 内置默认配置
+    Default,
+    /// 用户级配置文件
+    User,
 }
 
 impl ConfigManager {
@@ -17,10 +36,16 @@ impl ConfigManager {
         let mut manager = Self {
             settings: Settings::default(),
             config_path: None,
+            config_sources: Vec::new(),
         };
 
         manager.load()?;
         Ok(manager)
+    }
+    
+    /// 获取配置来源列表
+    pub fn config_sources(&self) -> &[ConfigSource] {
+        &self.config_sources
     }
 
     /// 获取当前配置
@@ -40,18 +65,26 @@ impl ConfigManager {
 
     /// 加载配置
     pub fn load(&mut self) -> Result<()> {
+        // 清空之前的配置来源
+        self.config_sources.clear();
+        
         // 1. 加载内置默认配置
         self.settings = Settings::default();
+        self.add_config_source(ConfigSource {
+            path: PathBuf::from("<built-in>"),
+            source_type: ConfigSourceType::Default,
+            loaded_at: std::time::SystemTime::now(),
+        });
 
-        // 3. 加载用户级配置文件
+        // 2. 加载用户级配置文件
         if let Some(user_path) = Self::user_config_path() {
             if user_path.exists() {
-                self.merge_from_file(&user_path)?;
+                self.merge_from_file(&user_path, ConfigSourceType::User)?;
                 self.config_path = Some(user_path);
             }
         }
 
-        // 5. 验证配置
+        // 3. 验证配置
         self.validate()?;
 
         Ok(())
@@ -75,7 +108,7 @@ impl ConfigManager {
     }
 
     /// 从文件合并配置
-    fn merge_from_file(&mut self, path: &PathBuf) -> Result<()> {
+    fn merge_from_file(&mut self, path: &PathBuf, source_type: ConfigSourceType) -> Result<()> {
         let config_str = std::fs::read_to_string(path)
             .map_err(|e| Error::Config(format!("读取配置文件失败: {}", e)))?;
 
@@ -83,66 +116,20 @@ impl ConfigManager {
             .map_err(|e| Error::Config(format!("解析配置文件失败: {}", e)))?;
 
         self.merge_settings(file_settings);
+        
+        // 记录配置来源
+        self.add_config_source(ConfigSource {
+            path: path.clone(),
+            source_type,
+            loaded_at: std::time::SystemTime::now(),
+        });
+        
         Ok(())
     }
 
     /// 合并配置设置
     fn merge_settings(&mut self, new_settings: Settings) {
-        // 合并微信设置
-        if new_settings.wechat.cache_path.is_some() {
-            self.settings.wechat.cache_path = new_settings.wechat.cache_path;
-        }
-
-        if !new_settings.wechat.cache_patterns.is_empty() {
-            self.settings.wechat.cache_patterns = new_settings.wechat.cache_patterns;
-        }
-
-        // 合并清理设置
-        self.settings.cleaning.default_mode = new_settings.cleaning.default_mode;
-        self.settings.cleaning.preserve_originals = new_settings.cleaning.preserve_originals;
-
-        if new_settings.cleaning.min_file_size > 0 {
-            self.settings.cleaning.min_file_size = new_settings.cleaning.min_file_size;
-        }
-
-        // 合并UI设置
-        if !new_settings.ui.theme.primary_color.is_empty() {
-            self.settings.ui.theme.primary_color = new_settings.ui.theme.primary_color;
-        }
-
-        if !new_settings.ui.theme.secondary_color.is_empty() {
-            self.settings.ui.theme.secondary_color = new_settings.ui.theme.secondary_color;
-        }
-
-        if !new_settings.ui.theme.highlight_color.is_empty() {
-            self.settings.ui.theme.highlight_color = new_settings.ui.theme.highlight_color;
-        }
-
-        // 合并快捷键设置
-        let keybindings = &mut self.settings.ui.keybindings;
-        let new_keybindings = new_settings.ui.keybindings;
-
-        if new_keybindings.quit != '\0' {
-            keybindings.quit = new_keybindings.quit;
-        }
-        if new_keybindings.up != '\0' {
-            keybindings.up = new_keybindings.up;
-        }
-        if new_keybindings.down != '\0' {
-            keybindings.down = new_keybindings.down;
-        }
-        if new_keybindings.left != '\0' {
-            keybindings.left = new_keybindings.left;
-        }
-        if new_keybindings.right != '\0' {
-            keybindings.right = new_keybindings.right;
-        }
-        if new_keybindings.confirm != '\0' {
-            keybindings.confirm = new_keybindings.confirm;
-        }
-        if new_keybindings.delete != '\0' {
-            keybindings.delete = new_keybindings.delete;
-        }
+        self.settings.merge(new_settings);
     }
 
     /// 验证配置
@@ -195,6 +182,11 @@ impl ConfigManager {
     /// 获取用户级配置文件路径
     fn user_config_path() -> Option<PathBuf> {
         dirs::config_dir().map(|p| p.join("wechat-cleaner/config.toml"))
+    }
+    
+    /// 添加配置来源记录
+    fn add_config_source(&mut self, source: ConfigSource) {
+        self.config_sources.push(source);
     }
 }
 
@@ -253,7 +245,7 @@ mod tests {
         .unwrap();
 
         let mut manager = ConfigManager::new().unwrap();
-        manager.merge_from_file(&config_path).unwrap();
+        manager.merge_from_file(&config_path, ConfigSourceType::User).unwrap();
         let settings = manager.settings();
 
         assert_eq!(
@@ -319,5 +311,40 @@ mod tests {
         let content = std::fs::read_to_string(&config_path).unwrap();
         assert!(content.contains("primary_color = \"purple\""));
         assert!(content.contains("min_file_size = 8192"));
+    }
+    
+    #[test]
+    fn test_config_sources_tracking() {
+        let manager = ConfigManager::new().unwrap();
+        let sources = manager.config_sources();
+        
+        // 应该至少有一个默认配置来源
+        assert!(!sources.is_empty());
+        assert_eq!(sources[0].source_type, ConfigSourceType::Default);
+        assert_eq!(sources[0].path, PathBuf::from("<built-in>"));
+    }
+    
+    #[test]
+    fn test_merge_priority() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+        
+        // 创建简单的配置文件
+        let mut file = File::create(&config_path).unwrap();
+        file.write_all(
+            b"[wechat]\ncache_patterns = [\"test_pattern\"]\n\n[cleaning]\ndefault_mode = \"auto\"\npreserve_originals = false\nmin_file_size = 2048\n\n[ui.theme]\nprimary_color = \"red\"\nsecondary_color = \"green\"\nhighlight_color = \"yellow\"\n\n[ui.keybindings]\nquit = 'x'\nup = 'w'\ndown = 's'\nleft = 'a'\nright = 'd'\nconfirm = ' '\ndelete = 'r'\n"
+        ).unwrap();
+        
+        let mut manager = ConfigManager::new().unwrap();
+        let original_size = manager.settings.cleaning.min_file_size;
+        
+        // 加载文件配置
+        manager.merge_from_file(&config_path, ConfigSourceType::User).unwrap();
+        
+        // 文件配置应该覆盖默认配置
+        assert_ne!(manager.settings.cleaning.min_file_size, original_size);
+        assert_eq!(manager.settings.cleaning.min_file_size, 2048);
+        assert_eq!(manager.settings.ui.theme.primary_color, "red");
+        assert_eq!(manager.settings.ui.keybindings.quit, 'x');
     }
 }

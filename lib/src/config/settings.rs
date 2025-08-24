@@ -2,6 +2,12 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// 配置合并策略
+pub trait Merge {
+    /// 将其他配置合并到当前配置中
+    fn merge(&mut self, other: Self);
+}
+
 /// 应用程序设置
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Settings {
@@ -209,6 +215,101 @@ impl Default for Settings {
     }
 }
 
+// 实现 Merge trait 为各个配置结构
+impl Merge for Settings {
+    fn merge(&mut self, other: Self) {
+        self.wechat.merge(other.wechat);
+        self.cleaning.merge(other.cleaning);
+        self.ui.merge(other.ui);
+    }
+}
+
+impl Merge for WechatSettings {
+    fn merge(&mut self, other: Self) {
+        // 如果 other 中有新的路径，则更新
+        if other.cache_path.is_some() {
+            self.cache_path = other.cache_path;
+        }
+        
+        // 如果 other 中有非空的模式列表，则更新
+        if !other.cache_patterns.is_empty() {
+            self.cache_patterns = other.cache_patterns;
+        }
+    }
+}
+
+impl Merge for CleaningSettings {
+    fn merge(&mut self, other: Self) {
+        // 清理模式直接更新（枚举类型没有“空”状态）
+        self.default_mode = other.default_mode;
+        
+        // 布尔值直接更新
+        self.preserve_originals = other.preserve_originals;
+        
+        // 只有当新值大于 0 时才更新最小文件大小
+        if other.min_file_size > 0 {
+            self.min_file_size = other.min_file_size;
+        }
+    }
+}
+
+impl Merge for UiSettings {
+    fn merge(&mut self, other: Self) {
+        self.theme.merge(other.theme);
+        self.keybindings.merge(other.keybindings);
+    }
+}
+
+impl Merge for ThemeSettings {
+    fn merge(&mut self, other: Self) {
+        // 只有当新颜色非空且不等于默认值时才更新
+        if !other.primary_color.is_empty() && other.primary_color != default_primary_color() {
+            self.primary_color = other.primary_color;
+        }
+        
+        if !other.secondary_color.is_empty() && other.secondary_color != default_secondary_color() {
+            self.secondary_color = other.secondary_color;
+        }
+        
+        if !other.highlight_color.is_empty() && other.highlight_color != default_highlight_color() {
+            self.highlight_color = other.highlight_color;
+        }
+    }
+}
+
+impl Merge for Keybindings {
+    fn merge(&mut self, other: Self) {
+        // 只有当新快捷键不是 null 字符且不等于默认值时才更新
+        if other.quit != '\0' && other.quit != default_quit_key() {
+            self.quit = other.quit;
+        }
+        
+        if other.up != '\0' && other.up != default_up_key() {
+            self.up = other.up;
+        }
+        
+        if other.down != '\0' && other.down != default_down_key() {
+            self.down = other.down;
+        }
+        
+        if other.left != '\0' && other.left != default_left_key() {
+            self.left = other.left;
+        }
+        
+        if other.right != '\0' && other.right != default_right_key() {
+            self.right = other.right;
+        }
+        
+        if other.confirm != '\0' && other.confirm != default_confirm_key() {
+            self.confirm = other.confirm;
+        }
+        
+        if other.delete != '\0' && other.delete != default_delete_key() {
+            self.delete = other.delete;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -250,5 +351,145 @@ mod tests {
             deserialized.ui.keybindings.quit,
             settings.ui.keybindings.quit
         );
+    }
+    
+    #[test]
+    fn test_merge_wechat_settings() {
+        let mut base = WechatSettings {
+            cache_path: None,
+            cache_patterns: vec!["old_pattern".to_string()],
+        };
+        
+        let other = WechatSettings {
+            cache_path: Some(PathBuf::from("/new/path")),
+            cache_patterns: vec!["new_pattern".to_string()],
+        };
+        
+        base.merge(other);
+        
+        assert_eq!(base.cache_path, Some(PathBuf::from("/new/path")));
+        assert_eq!(base.cache_patterns, vec!["new_pattern".to_string()]);
+    }
+    
+    #[test]
+    fn test_merge_cleaning_settings() {
+        let mut base = CleaningSettings {
+            default_mode: CleaningMode::Smart,
+            preserve_originals: true,
+            min_file_size: 1024,
+        };
+        
+        let other = CleaningSettings {
+            default_mode: CleaningMode::Auto,
+            preserve_originals: false,
+            min_file_size: 2048,
+        };
+        
+        base.merge(other);
+        
+        assert_eq!(base.default_mode, CleaningMode::Auto);
+        assert!(!base.preserve_originals);
+        assert_eq!(base.min_file_size, 2048);
+    }
+    
+    #[test]
+    fn test_merge_theme_settings() {
+        let mut base = ThemeSettings {
+            primary_color: "blue".to_string(),
+            secondary_color: "green".to_string(),
+            highlight_color: "yellow".to_string(),
+        };
+        
+        let other = ThemeSettings {
+            primary_color: "red".to_string(),
+            secondary_color: "green".to_string(), // 与默认值相同，不应该更新
+            highlight_color: "purple".to_string(),
+        };
+        
+        base.merge(other);
+        
+        assert_eq!(base.primary_color, "red");
+        assert_eq!(base.secondary_color, "green"); // 保持原值，因为 other 的值等于默认值
+        assert_eq!(base.highlight_color, "purple");
+    }
+    
+    #[test]
+    fn test_merge_keybindings() {
+        let mut base = Keybindings {
+            quit: 'q',
+            up: 'k',
+            down: 'j',
+            left: 'h',
+            right: 'l',
+            confirm: '\n',
+            delete: 'd',
+        };
+        
+        let other = Keybindings {
+            quit: 'x',
+            up: 'w',
+            down: 'j', // 与默认值相同，不应该更新
+            left: 'a',
+            right: 's',
+            confirm: '\n', // 与默认值相同，不应该更新
+            delete: 'f',
+        };
+        
+        base.merge(other);
+        
+        assert_eq!(base.quit, 'x');
+        assert_eq!(base.up, 'w');
+        assert_eq!(base.down, 'j'); // 保持原值，因为 other 的值等于默认值
+        assert_eq!(base.left, 'a');
+        assert_eq!(base.right, 's');
+        assert_eq!(base.confirm, '\n'); // 保持原值，因为 other 的值等于默认值
+        assert_eq!(base.delete, 'f');
+    }
+    
+    #[test]
+    fn test_merge_complete_settings() {
+        let mut base = Settings::default();
+        
+        let other = Settings {
+            wechat: WechatSettings {
+                cache_path: Some(PathBuf::from("/custom/path")),
+                cache_patterns: vec!["custom_pattern".to_string()],
+            },
+            cleaning: CleaningSettings {
+                default_mode: CleaningMode::Auto,
+                preserve_originals: false,
+                min_file_size: 4096,
+            },
+            ui: UiSettings {
+                theme: ThemeSettings {
+                    primary_color: "purple".to_string(),
+                    secondary_color: "orange".to_string(),
+                    highlight_color: "cyan".to_string(),
+                },
+                keybindings: Keybindings {
+                    quit: 'x',
+                    up: 'w',
+                    down: 's',
+                    left: 'a',
+                    right: 'd',
+                    confirm: ' ',
+                    delete: 'r',
+                },
+            },
+        };
+        
+        base.merge(other);
+        
+        // 验证合并结果
+        assert_eq!(base.wechat.cache_path, Some(PathBuf::from("/custom/path")));
+        assert_eq!(base.wechat.cache_patterns, vec!["custom_pattern".to_string()]);
+        assert_eq!(base.cleaning.default_mode, CleaningMode::Auto);
+        assert!(!base.cleaning.preserve_originals);
+        assert_eq!(base.cleaning.min_file_size, 4096);
+        assert_eq!(base.ui.theme.primary_color, "purple");
+        assert_eq!(base.ui.theme.secondary_color, "orange");
+        assert_eq!(base.ui.theme.highlight_color, "cyan");
+        assert_eq!(base.ui.keybindings.quit, 'x');
+        assert_eq!(base.ui.keybindings.up, 'w');
     }
 }

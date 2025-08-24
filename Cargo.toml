@@ -1,3 +1,33 @@
 [workspace]
 members = ["lib", "cli",]
 resolver = "2"
+
+[profile.release]
+lto = true
+# 启用代码生成单元优化
+codegen-units = 1
+# 启用恐慌展开优化
+panic = "abort"
+# 启用编译器优化
+opt-level = 3
+# 启用调试信息剥离以减小二进制大小
+strip = true
+
+[profile.dev]
+# 开发环境下启用增量编译
+incremental = true
+# 快速编译，但性能较低
+opt-level = 0
+
+[profile.bench]
+# 基准测试配置
+inherits = "release"
+debug = true
+
+# 为生产环境定制的精简配置
+[profile.dist]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

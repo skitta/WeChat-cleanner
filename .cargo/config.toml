@@ -1,0 +1,35 @@
+# .cargo/config.toml
+[build]
+
+[target.x86_64-apple-darwin]
+# macOS 特定优化
+rustflags = ["-C", "target-cpu=native"]
+
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "target-cpu=native"]
+
+[target.x86_64-unknown-linux-gnu]
+# Linux 特定优化
+rustflags = ["-C", "target-cpu=native"]
+
+# 缓存配置
+[net]
+git-fetch-with-cli = true
+
+[registry]
+default = "crates-io"
+
+# 别名配置，提升开发体验
+[alias]
+# 快速开发构建
+dev = "build --profile dev"
+# 生产构建
+prod = "build --profile dist"
+# 运行 CLI
+run-cli = "run --bin wechat-cleaner"
+# 测试所有包
+test-all = "test --workspace"
+# 检查代码质量
+check-all = "clippy --workspace --all-targets -- -D warnings"
+# 格式化代码
+fmt-all = "fmt --all"
