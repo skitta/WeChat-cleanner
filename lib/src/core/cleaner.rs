@@ -1,5 +1,5 @@
 use crate::config::settings::{CleaningMode, Settings};
-use crate::core::file_utils::{self, FileInfo};
+use crate::core::file_utils::{self, FileInfo, HasSize};
 use crate::core::progressor::{Progress, ProgressTracker, ProgressReporter, ProgressCallback};
 use crate::core::scanner::ScanResult;
 use crate::errors::{Error, Result};
@@ -99,7 +99,7 @@ impl FileCleaner {
     /// 删除单个文件
     pub fn delete_file(&mut self, file: &FileInfo) -> Result<bool> {
         // 检查文件大小是否满足最小要求
-        if file.size < self.settings.cleaning.min_file_size {
+        if file.size() < self.settings.cleaning.min_file_size {
             return Ok(false);
         }
 
@@ -111,7 +111,7 @@ impl FileCleaner {
         // 删除文件
         match std::fs::remove_file(&file.path) {
             Ok(_) => {
-                self.freed_space += file.size;
+                self.freed_space += file.size();
                 self.files_deleted += 1;
                 Ok(true)
             }

@@ -2,6 +2,8 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use crate::core::file_utils::WechatCacheResolver;
+
 /// 配置合并策略
 pub trait Merge {
     /// 将其他配置合并到当前配置中
@@ -19,12 +21,13 @@ pub struct Settings {
 /// 微信相关设置
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct WechatSettings {
-    /// 微信缓存路径，如果为None则自动检测
+    /// 微信缓存路径
+    #[serde(default = "default_wechat_cache_path")]
     pub cache_path: Option<PathBuf>,
 
     /// 用于识别微信自动生成副本的文件名模式
     #[serde(default = "default_cache_patterns")]
-    pub cache_patterns: Vec<String>,
+    pub cache_patterns: String,
 }
 
 /// 清理设置
@@ -41,6 +44,10 @@ pub struct CleaningSettings {
     /// 最小文件大小（字节），小于此值的文件将被忽略
     #[serde(default = "default_min_file_size")]
     pub min_file_size: u64,
+
+    /// 临时文件保存位置
+    #[serde(default = "default_scan_result_save_path")]
+    pub scan_result_save_path: Option<PathBuf>,
 }
 
 /// 清理模式
@@ -116,11 +123,12 @@ pub struct Keybindings {
 }
 
 // 默认值函数
-fn default_cache_patterns() -> Vec<String> {
-    vec![
-        r"\(\d+\)\.[a-zA-Z0-9]+$".to_string(),
-        //r"-\d{13}\.".to_string(),
-    ]
+fn default_wechat_cache_path() -> Option<PathBuf> {
+    WechatCacheResolver::find_wechat_dirs().ok()
+}
+
+fn default_cache_patterns() -> String {
+        r"\(\d+\)\.[a-zA-Z0-9]+$".to_string()
 }
 
 fn default_cleaning_mode() -> CleaningMode {
@@ -133,6 +141,10 @@ fn default_preserve_originals() -> bool {
 
 fn default_min_file_size() -> u64 {
     1024 // 1KB
+}
+
+fn default_scan_result_save_path() -> Option<PathBuf> {
+    dirs::cache_dir().map(|p| {p.join("wechat-cleaner/scan_result.json")})
 }
 
 fn default_theme() -> ThemeSettings {
@@ -199,13 +211,14 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             wechat: WechatSettings {
-                cache_path: None,
+                cache_path: default_wechat_cache_path(),
                 cache_patterns: default_cache_patterns(),
             },
             cleaning: CleaningSettings {
                 default_mode: default_cleaning_mode(),
                 preserve_originals: default_preserve_originals(),
                 min_file_size: default_min_file_size(),
+                scan_result_save_path: default_scan_result_save_path()
             },
             ui: UiSettings {
                 theme: default_theme(),
@@ -357,18 +370,18 @@ mod tests {
     fn test_merge_wechat_settings() {
         let mut base = WechatSettings {
             cache_path: None,
-            cache_patterns: vec!["old_pattern".to_string()],
+            cache_patterns: "old_pattern".to_string(),
         };
         
         let other = WechatSettings {
             cache_path: Some(PathBuf::from("/new/path")),
-            cache_patterns: vec!["new_pattern".to_string()],
+            cache_patterns: "new_pattern".to_string(),
         };
         
         base.merge(other);
         
         assert_eq!(base.cache_path, Some(PathBuf::from("/new/path")));
-        assert_eq!(base.cache_patterns, vec!["new_pattern".to_string()]);
+        assert_eq!(base.cache_patterns, "new_pattern".to_string());
     }
     
     #[test]
@@ -377,12 +390,14 @@ mod tests {
             default_mode: CleaningMode::Smart,
             preserve_originals: true,
             min_file_size: 1024,
+            scan_result_save_path: Some(PathBuf::from("/first/temp"))
         };
         
         let other = CleaningSettings {
             default_mode: CleaningMode::Auto,
             preserve_originals: false,
             min_file_size: 2048,
+            scan_result_save_path: Some(PathBuf::from("/second/temp"))
         };
         
         base.merge(other);
@@ -390,6 +405,7 @@ mod tests {
         assert_eq!(base.default_mode, CleaningMode::Auto);
         assert!(!base.preserve_originals);
         assert_eq!(base.min_file_size, 2048);
+        assert_eq!(base.scan_result_save_path, Some(PathBuf::from("/second/temp")))
     }
     
     #[test]
@@ -453,12 +469,13 @@ mod tests {
         let other = Settings {
             wechat: WechatSettings {
                 cache_path: Some(PathBuf::from("/custom/path")),
-                cache_patterns: vec!["custom_pattern".to_string()],
+                cache_patterns: "custom_pattern".to_string(),
             },
             cleaning: CleaningSettings {
                 default_mode: CleaningMode::Auto,
                 preserve_originals: false,
                 min_file_size: 4096,
+                scan_result_save_path: Some(PathBuf::from("/second/temp"))
             },
             ui: UiSettings {
                 theme: ThemeSettings {
@@ -482,7 +499,7 @@ mod tests {
         
         // 验证合并结果
         assert_eq!(base.wechat.cache_path, Some(PathBuf::from("/custom/path")));
-        assert_eq!(base.wechat.cache_patterns, vec!["custom_pattern".to_string()]);
+        assert_eq!(base.wechat.cache_patterns, "custom_pattern".to_string());
         assert_eq!(base.cleaning.default_mode, CleaningMode::Auto);
         assert!(!base.cleaning.preserve_originals);
         assert_eq!(base.cleaning.min_file_size, 4096);

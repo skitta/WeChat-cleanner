@@ -4,6 +4,7 @@ use wechat_cleaner::config::ConfigManager;
 use wechat_cleaner::core::scanner::{FileScanner, ScanResult};
 use wechat_cleaner::core::cleaner::FileCleaner;
 use wechat_cleaner::core::progressor::Progress;
+use wechat_cleaner::core::file_utils::HasSize;
 
 /// 微信缓存清理工具
 #[derive(Parser)]
@@ -71,11 +72,11 @@ fn scan_files(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
     
     // 加载配置
     let config_manager = ConfigManager::new()?;
-    let settings = config_manager.settings().clone();
+    let settings = config_manager.settings();
     
     // 创建扫描器并设置进度回调
     let pb_clone = pb.clone();
-    let mut scanner = FileScanner::new(settings)
+    let mut scanner = FileScanner::new(settings.clone())
         .with_progress_callback(move |progress: &Progress| {
             if progress.is_completed() {
                 pb_clone.finish_with_message(progress.display(|_,_,f| -> String {format!("{}: 完成!", f)}));
@@ -92,14 +93,18 @@ fn scan_files(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
     
     // 执行扫描
     let result = scanner.scan()?;
-    let save_result_path = result.save(None)?;
-    
-    // 显示结果
-    println!("总文件数: {}", result.total_files_count);
-    println!("发现 {} 份重复文件", result.duplicate_count);
-    println!("扫描耗时: {:?}", result.scan_time);
-    if save_result_path.exists() {
-        println!("扫描结果已保存到: {}", save_result_path.display());
+
+    if result.duplicate_count == 0 {
+        println!("未发现重复文件")
+    } else {
+        let save_path = &settings.cleaning.scan_result_save_path.clone().ok_or("无法保存扫描结果，因为路径不合法")?;
+        result.save(save_path)?;
+        
+        // 显示结果
+        println!("总文件数: {}", result.total_files_count);
+        println!("发现 {} 份重复文件", result.duplicate_count);
+        println!("扫描耗时: {:?}", result.scan_time);
+        println!("扫描结果已保存到: {}", save_path.display());
     }
     
     if verbose {
@@ -107,7 +112,7 @@ fn scan_files(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
             println!("\n重复文件组 (哈希: {}):", hash);
             for file in files {
                 println!("  - {} (大小: {} 字节, 修改时间: {:?})", 
-                         file.path.display(), file.size, file.modified);
+                         file.path.display(), file.size(), file.modified);
             }
         }
     }
@@ -131,20 +136,14 @@ fn clean_files(mode: &str, _verbose: bool) -> Result<(), Box<dyn std::error::Err
     };
     
     // 尝试从临时文件加载扫描结果
-    let results = match ScanResult::load(None) {
+    let result_path = &settings.cleaning.scan_result_save_path.clone().ok_or("加载扫描结果文件地址错误")?;
+    let results = match ScanResult::load(result_path) {
         Ok(results) => results,
-        Err(e) => {
-            println!("{}", e);
+        Err(_) => {
             println!("请先执行扫描命令: wechat-cleaner scan");
             return Ok(());
         }
     };
-    
-    if results.duplicate_count == 0 {
-        println!("未发现重复文件");
-        results.delete(None)?;
-        return Ok(());
-    }
     
     // 创建进度条用于清理过程
     let pb = ProgressBar::new_spinner();
@@ -178,7 +177,7 @@ fn clean_files(mode: &str, _verbose: bool) -> Result<(), Box<dyn std::error::Err
     println!("清理完成！");
     println!("总共删除 {} 个文件", cleaner.files_deleted);
     println!("释放空间 {} MB", cleaner.freed_space / (1024 * 1024));
-    results.delete(None)?;
+    results.delete(result_path)?;
     Ok(())
 }
 

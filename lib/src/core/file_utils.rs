@@ -1,15 +1,58 @@
+//! 文件工具模块
+//!
+//! 提供文件操作、权限管理、文件信息收集和重复文件检测等核心功能。
+//! 采用函数式编程风格和分层处理逻辑，支持并行计算以提升性能。
+//!
+//! # 主要功能
+//! - 跨平台文件权限设置
+//! - 文件元数据收集与处理
+//! - 基于模式和哈希的重复文件检测
+//! - 微信缓存目录自动发现
+//!
+//! # 性能优化
+//! - 使用 rayon 进行并行计算
+//! - 按大小预分组避免不必要的哈希计算
+//! - 8KB-32KB 动态缓冲区优化文件读取
+//! - 分层处理逻辑：大小 → 模式 → 哈希
+
 use crate::errors::{Error, Result};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
+use walkdir::{WalkDir, DirEntry};
+use rayon::prelude::*;
+use std::borrow::Cow;
 use std::fs;
+use std::hash::Hash;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 #[cfg(windows)]
 use std::os::windows::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::collections::HashMap;
-use crate::core::progressor::{Progress, ProgressTracker, ProgressReporter};
 
 /// 设置文件权限（跨平台）
+///
+/// 根据不同操作系统平台设置文件权限，确保跨平台兼容性。
+/// 
+/// # 参数
+/// * `path` - 要设置权限的文件路径
+/// * `mode` - Unix 权限模式（Windows 下被忽略）
+///
+/// # 返回值
+/// * `Result<()>` - 设置成功返回 Ok(())，失败返回相应错误
+///
+/// # 平台支持
+/// - **Unix/Linux/macOS**: 使用标准的文件权限模式
+/// - **Windows**: 尝试移除只读属性，忽略权限模式参数
+/// - **其他平台**: 记录警告日志，不执行实际操作
+///
+/// # 示例
+/// ```rust
+/// use std::path::Path;
+/// 
+/// let path = Path::new("example.txt");
+/// set_file_permissions(&path, 0o644)?;
+/// ```
 pub fn set_file_permissions(path: &Path, mode: u32) -> Result<()> {
     #[cfg(unix)]
     {
@@ -40,18 +83,63 @@ pub fn set_file_permissions(path: &Path, mode: u32) -> Result<()> {
     Ok(())
 }
 
-/// 文件信息结构
+/// 检测文件或目录是否为隐藏文件
+///
+/// 根据 Unix 约定，以点号 "." 开头的文件名被认为是隐藏文件。
+/// 在文件扫描过程中用于过滤不需要处理的隐藏文件。
+///
+/// # 参数
+/// * `entry` - walkdir 的目录项
+///
+/// # 返回值
+/// * `bool` - 如果是隐藏文件返回 true，否则返回 false
+fn is_hidden(entry: &DirEntry) -> bool {
+    entry.file_name()
+         .to_str()
+         .map(|s| s.starts_with("."))
+         .unwrap_or(false)
+}
+
+/// 文件信息结构体
+///
+/// 封装文件的基本元数据信息，包括路径、大小和修改时间。
+/// 支持序列化和反序列化，可用于结果的持久化存储。
+///
+/// # 字段
+/// * `path` - 文件的绝对路径
+/// * `size` - 文件大小（字节）
+/// * `modified` - 文件最后修改时间（Unix 时间戳）
+///
+/// # 示例
+/// ```rust
+/// use std::path::Path;
+/// 
+/// let file_info = FileInfo::new(Path::new("example.txt"))?;
+/// println!("文件大小: {} 字节", file_info.size());
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileInfo {
     pub path: PathBuf,
-    pub size: u64,
+    size: u64,
     pub modified: u64,
-    pub hash: Option<String>,
 }
 
 impl FileInfo {
-    pub fn new(path: &Path) -> Result<Self> {
-        let metadata = fs::metadata(path)?;
+    /// 从文件路径创建 FileInfo 实例
+    ///
+    /// 读取文件的元数据信息并创建相应的 FileInfo 结构体。
+    /// 会自动获取文件大小和最后修改时间。
+    ///
+    /// # 参数
+    /// * `file` - 文件路径引用
+    ///
+    /// # 返回值
+    /// * `Result<Self>` - 成功返回 FileInfo 实例，失败返回错误
+    ///
+    /// # 错误
+    /// 当文件不存在或无法访问时返回 IO 错误。
+    pub fn new(file: &Path) -> Result<Self> {
+        let metadata = fs::metadata(file)?;
         let size = metadata.len();
         let modified = metadata
             .modified()?
@@ -59,110 +147,397 @@ impl FileInfo {
             .as_secs();
 
         Ok(FileInfo {
-            path: path.to_path_buf(),
+            path: file.to_path_buf(),
             size,
             modified,
-            hash: None,
         })
     }
 
-    /// 计算文件的 MD5 哈希值
-    fn hash(&mut self) -> Result<()> {
-        use md5::{Digest, Md5};
-        use std::io::Read;
-
-        let mut file = fs::File::open(&self.path)?;
-        let mut hasher = Md5::new();
-        let mut buffer = [0; 8192]; // 8KB 缓冲区
-
-        loop {
-            let count = file.read(&mut buffer)?;
-            if count == 0 {
-                break;
-            }
-            hasher.update(&buffer[..count]);
+    /// 从指定目录收集所有文件信息
+    ///
+    /// 递归遍历指定目录，收集所有文件的元数据信息。
+    /// 使用并行处理优化性能，自动过滤隐藏文件。
+    ///
+    /// # 性能优化
+    /// - 先收集所有文件路径（快速操作）
+    /// - 使用并行处理进行元数据收集
+    /// - 只在 debug 模式下记录详细错误日志
+    ///
+    /// # 参数
+    /// * `path` - 要扫描的目录路径
+    ///
+    /// # 返回值
+    /// * `Result<Vec<Self>>` - 成功返回文件信息列表，失败返回错误
+    ///
+    /// # 错误
+    /// - `Error::CacheNotFound` - 目录不存在或无文件
+    ///
+    /// # 示例
+    /// ```rust
+    /// use std::path::PathBuf;
+    /// 
+    /// let path = PathBuf::from("/path/to/cache");
+    /// let files = FileInfo::collect_from(&path)?;
+    /// println!("找到 {} 个文件", files.len());
+    /// ```
+    pub fn collect_from(path: &PathBuf) -> Result<Vec<Self>> {
+        // 先检查路径是否存在
+        if !path.exists() {
+            return Err(Error::CacheNotFound);
         }
-        self.hash = Some(format!("{:x}", hasher.finalize()));
 
-        Ok(())
-    }
-}
+        // 优化1: 首先收集所有文件路径（快速操作）
+        let file_entries: Vec<_> = WalkDir::new(path)
+            .into_iter()
+            .filter_entry(|e| !is_hidden(e))
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+            .collect();
 
-pub trait FileInfosExt {
-    fn calculate_hashes(self) -> Self
-    where
-        Self: Sized,
-    {
-        self.calculate_hashes_with_callback(|_| {})
-    }
-    
-    fn calculate_hashes_with_callback<F>(self, callback: F) -> Self
-    where
-        Self: Sized,
-        F: Fn(&Progress) + Sync + Send + 'static;
-    
-    fn group_by_hash(self) -> HashMap<String, Vec<FileInfo>>
-    where
-        Self: Sized,
-    {
-        self.group_by_hash_with_callback(|_| {})
-    }
-
-    fn group_by_hash_with_callback<F>(self, callback: F) -> HashMap<String, Vec<FileInfo>>
-    where
-        Self: Sized,
-        F: Fn(&Progress) + Sync + Send + 'static;
-}
-
-impl FileInfosExt for Vec<FileInfo> {
-    fn calculate_hashes_with_callback<F>(mut self, callback: F) -> Self
-    where 
-    F: Fn(&Progress) + Sync + Send + 'static,
-    {
-        let total = self.len();
-        let mut progress = ProgressTracker::new(Progress::new(), callback);
-        progress.report_msg("开始计算文件哈希...");
-        progress.report_progress(0, total);
-
-        for file in &mut self {
-            progress.update(|| {
-                file.hash().ok();
-            });
+        if file_entries.is_empty() {
+            return Err(Error::CacheNotFound);
         }
-        progress.report_complete();
-        self
-    }
 
-    fn group_by_hash_with_callback<F>(self, callback: F) -> HashMap<String, Vec<FileInfo>>
-    where
-        F: Fn(&Progress) + Sync + Send + 'static,
-    {
-        let total = self.len();
-        let mut progress = ProgressTracker::new(Progress::new(), callback);
-        let mut groups: HashMap<String, Vec<FileInfo>> = HashMap::with_capacity(total / 2);  // 预分配空间
-
-        progress.report_msg("开始分组文件...");
-        progress.report_progress(0, total);
-
-        self.into_iter().for_each(|file| {
-            progress.update(|| {
-                if let Some(ref hash) = file.hash {
-                    groups.entry(hash.clone()).or_default().push(file);
+        // 优化2: 预分配容量并使用并行处理进行元数据收集
+        let files: Vec<Self> = file_entries
+            .into_par_iter()
+            .filter_map(|entry| {
+                // 优化3: 减少错误处理开销，只记录严重错误
+                match FileInfo::new(entry.path()) {
+                    Ok(info) => Some(info),
+                    Err(e) => {
+                        // 只在 debug 模式下记录详细日志
+                        #[cfg(debug_assertions)]
+                        log::warn!("Failed to process {}: {}", entry.path().display(), e);
+                        None
+                    }
                 }
-            });
-        });
+            })
+            .collect();
 
-        progress.report_complete();
-        
-        groups
+        if files.is_empty() {
+            Err(Error::CacheNotFound)
+        } else {
+            Ok(files)
+        }
     }
 }
+
+/// 文件名称相关操作 trait
+///
+/// 为文件对象提供名称提取和模式匹配功能。
+/// 支持基本文件名、基本名称和模式匹配名称提取。
+pub trait Named {
+    /// 获取完整文件名（包含扩展名）
+    fn name(&self) -> Option<Cow<'_, str>>;
+    
+    /// 获取文件的基本名称（不包含扩展名）
+    fn base_name(&self) -> Option<Cow<'_, str>>;
+    
+    /// 根据正则表达式提取模式化名称
+    ///
+    /// 优先使用正则表达式匹配，如果匹配失败则移除扩展名。
+    /// 用于识别具有类似模式的文件（如序号后缀、时间戳等）。
+    fn patterned_name(&self, regex: &Regex) -> Option<Cow<'_, str>>;
+}
+
+impl Named for FileInfo {
+    fn name(&self) -> Option<Cow<'_, str>> {
+        self.path.file_name().map(|n| n.to_string_lossy())
+    }
+
+    fn base_name(&self) -> Option<Cow<'_, str>> {
+        self.path.file_stem().map(|n| n.to_string_lossy())
+    }
+
+    fn patterned_name(&self, regex: &Regex) -> Option<Cow<'_, str>> {
+        let file_name = self.name()?;
+        
+        // 优先使用正则表达式匹配，提取匹配位置之前的部分作为基本名称
+        if let Some(captures) = regex.captures(file_name.as_ref()) {
+            if let Some(matched) = captures.get(0) {
+                let base_name = &file_name.as_ref()[..matched.start()];
+                if !base_name.is_empty() {
+                    return Some(Cow::Owned(base_name.to_owned()));
+                }
+            }
+        }
+        
+        // 如果正则匹配失败，则移除文件扩展名
+        if let Some(dot_pos) = file_name.as_ref().rfind(".") {
+            Some(Cow::Owned(file_name.as_ref()[..dot_pos].to_owned()))
+        } else {
+            Some(file_name)
+        }
+    }
+}
+
+/// 文件大小相关操作 trait
+///
+/// 为文件对象提供获取文件大小的能力。
+/// 用于文件分组和排序操作。
+pub trait HasSize {
+    /// 获取文件大小（字节数）
+    fn size(&self) -> u64;
+}
+
+impl HasSize for FileInfo {
+    fn size(&self) -> u64 {
+        self.size
+    }
+}
+
+/// 文件哈希相关操作 trait
+///
+/// 为文件对象提供计算哈希值的能力。
+/// 使用 MD5 算法计算文件内容的哈希值，用于精确的重复文件检测。
+pub trait Hashed {
+    /// 计算文件的 MD5 哈希值
+    ///
+    /// # 返回值
+    /// * `Option<String>` - 成功返回哈希值字符串，失败返回 None
+    fn hash(&self) -> Option<String>;
+}
+
+impl Hashed for FileInfo {
+    fn hash(&self) -> Option<String> {
+        use md5::{Digest, Md5};
+        use std::io::{Read, BufReader};
+
+        // 使用 BufReader 优化 I/O 性能
+        let file = fs::File::open(&self.path).ok()?;
+        let mut reader = BufReader::with_capacity(65536, file); // 64KB 缓冲区
+        let mut hasher = Md5::new();
+
+        // 根据文件大小动态调整缓冲区大小
+        let buffer_size = if self.size < 1024 * 1024 {
+            8192 // 8KB - 适合小文件
+        } else {
+            32768 // 32KB - 适合大文件
+        };
+
+        let mut buffer = vec![0u8; buffer_size];
+
+        // 流式读取文件内容并计算哈希
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) => break, // EOF
+                Ok(n) => hasher.update(&buffer[..n]),
+                Err(_) => return None, // 读取失败
+            }
+        }
+        
+        let result = hasher.finalize();
+        Some(format!("{:x}", result))
+    }
+}
+
+/// 文件分组操作 trait
+///
+/// 为文件集合提供各种分组功能，支持按不同维度进行文件分类。
+/// 采用函数式编程风格，支持链式调用和并行处理。
+///
+/// # 性能特性
+/// - 按需使用并行处理以提升性能
+/// - 支持各种自定义分组策略
+/// - 内存优化的集合操作
+pub trait FileGrouper: IntoIterator {
+    /// 通用分组方法
+    ///
+    /// 根据提供的键提取函数对文件集合进行分组。
+    /// 是所有其他分组方法的基础实现。
+    ///
+    /// # 参数
+    /// * `key_extractor` - 键提取函数，从文件中提取分组键
+    ///
+    /// # 返回值
+    /// * `HashMap<K, Vec<Self::Item>>` - 按键分组的文件集合
+    fn group_by<F, K>(self, key_extractor: F) -> HashMap<K, Vec<Self::Item>>
+    where 
+        Self: Sized,
+        F: Fn(&Self::Item) -> Option<K>,
+        K: Eq + Hash,
+    {
+        let mut map: HashMap<K, Vec<Self::Item>> = HashMap::new();
+        for item in self.into_iter() {
+            if let Some(key) = key_extractor(&item) {
+                map.entry(key).or_insert_with(Vec::new).push(item);
+            }
+        }
+        map
+    }
+
+    /// 按文件大小分组
+    ///
+    /// 将文件按照大小进行分组，相同大小的文件将被分在同一组。
+    /// 这是性能优化的第一步，只有相同大小的文件才可能是重复文件。
+    fn group_by_size(self) -> HashMap<u64, Vec<Self::Item>>
+    where 
+        Self: Sized,
+        Self::Item: HasSize
+    {
+        self.group_by(|item| Some(item.size()))
+    }
+
+    /// 按文件名模式分组
+    ///
+    /// 根据正则表达式对文件名进行模式匹配分组。
+    /// 用于识别具有类似命名模式的文件（如序号后缀、时间戳等）。
+    fn group_by_pattern(self, regex: &Regex) -> HashMap<String, Vec<Self::Item>>
+    where 
+        Self: Sized,
+        Self::Item: Named
+    {
+        self.group_by(|item| item.patterned_name(regex).map(|name| name.into_owned()))
+    }
+
+    /// 按文件哈希值分组（并行版本）
+    ///
+    /// 使用并行处理计算文件哈希值并进行分组。
+    /// 这是最耗时的操作，但能提供最精确的重复文件检测。
+    ///
+    /// # 性能特性
+    /// - 使用 rayon 进行并行哈希计算
+    /// - 动态调整缓冲区大小以优化性能
+    fn group_by_hash(self) -> HashMap<String, Vec<Self::Item>>
+    where 
+        Self: Sized + Send,
+        Self::Item: Hashed + Send,
+    {
+        let items: Vec<_> = self.into_iter().collect();
+        
+        // 并行计算所有文件的哈希值
+        let hash_pairs: Vec<(String, Self::Item)> = items
+            .into_par_iter()
+            .filter_map(|item| item.hash().map(|hash| (hash, item)))
+            .collect();
+        
+        // 按哈希值分组
+        let mut map: HashMap<String, Vec<Self::Item>> = HashMap::new();
+        for (hash, item) in hash_pairs {
+            map.entry(hash).or_insert_with(Vec::new).push(item);
+        }
+        map
+    }
+}
+
+/// 文件过滤与重复检测 trait
+///
+/// 扩展 FileGrouper，提供高级的重复文件检测功能。
+/// 采用分层处理策略，结合模式匹配和哈希比较实现高效的重复文件识别。
+///
+/// # 处理策略
+/// 1. 按模式分组，直接识别模式重复文件
+/// 2. 对非模式重复文件按大小进一步过滤
+/// 3. 最后使用哈希比较进行精确检测
+pub trait FileFilter: FileGrouper {
+    /// 按模式检测重复文件
+    ///
+    /// 采用分层检测策略，先按模式分组，再对非模式重复文件进行哈希检测。
+    /// 这种方法能够高效地识别两种类型的重复文件：
+    /// 1. 模式重复：具有相似命名模式的文件
+    /// 2. 内容重复：文件内容完全相同的文件
+    ///
+    /// # 参数
+    /// * `regex` - 用于模式匹配的正则表达式
+    ///
+    /// # 返回值
+    /// * `HashMap<String, Vec<Self::Item>>` - 重复文件组，键为识别标识，值为重复文件列表
+    ///
+    /// # 性能优化
+    /// - 先按模式分组，直接识别模式重复
+    /// - 只对非模式重复文件进行耗时的哈希计算
+    /// - 使用并行处理提升性能
+    /// - 按大小预过滤减少不必要的计算
+    ///
+    /// # 示例
+    /// ```rust
+    /// use regex::Regex;
+    /// 
+    /// let regex = Regex::new(r"_\d+").unwrap(); // 匹配序号后缀
+    /// let duplicates = files.duplicates_by_pattern(&regex);
+    /// ```
+    fn duplicates_by_pattern(self, regex: &Regex) -> HashMap<String, Vec<Self::Item>>
+    where 
+        Self: Sized,
+        Self::Item: HasSize + Named + Hashed + Send + Clone,
+    {
+        // 第一步：按模式分组，分离模式重复和候选文件
+        let (pattern_duplicates, size_candidates): (Vec<_>, Vec<_>) = self.group_by_pattern(regex)
+            .into_par_iter()
+            .partition(|(_, items)| items.len() > 1);
+
+        // 初始化结果集合，先加入模式重复文件
+        let mut duplicates: HashMap<String, Vec<Self::Item>> = pattern_duplicates.into_iter().collect();
+
+        // 第二步：对非模式重复文件进行哈希检测
+        if !size_candidates.is_empty() {
+            // 收集所有候选文件
+            let candidates: Vec<Self::Item> = size_candidates
+                .into_par_iter()
+                .flat_map(|(_, items)| items)
+                .collect();
+            
+            // 按大小分组后再按哈希检测
+            let hash_duplicate: HashMap<String, Vec<Self::Item>> = candidates
+                .group_by_size()
+                .into_par_iter()
+                .filter(|(_, item)| item.len() > 1) // 只处理大小相同的文件组
+                .flat_map(|(_, items)| items)
+                .collect::<Vec<_>>()
+                .group_by_hash()
+                .into_iter()
+                .filter(|(_, items)| items.len() > 1) // 只保留真正重复的文件组
+                .collect();
+                
+            duplicates.extend(hash_duplicate);
+        }
+
+        duplicates
+    }
+}
+
+// Trait 实现
+/// FileFilter trait 为 FileInfo 的实现
+impl FileFilter for Vec<FileInfo> {}
+
+/// FileGrouper trait 的通用实现
+/// 为所有 Vec<T> 类型提供分组功能
+impl<T> FileGrouper for Vec<T> {}
+
 
 /// 微信缓存目录解析器（跨平台）
+///
+/// 提供跨平台的微信缓存目录自动发现功能。
+/// 支持 macOS、Windows 和 Linux 平台的微信安装目录检测。
+///
+/// # 支持的平台
+/// - **macOS**: `~/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files`
+/// - **Windows**: `%APPDATA%/Tencent/WeChat/All Users`, `%APPDATA%/WeChat Files`
+/// - **Linux**: Wine 环境下的微信路径
+///
+/// # 缓存目录结构
+/// - macOS: `msg/file` 子目录
+/// - Windows: `FileStorage` 子目录
+///
+/// # 示例
+/// ```rust
+/// let cache_dir = WechatCacheResolver::find_wechat_dirs()?;
+/// println!("微信缓存目录: {}", cache_dir.display());
+/// ```
 pub struct WechatCacheResolver;
 
 impl WechatCacheResolver {
     /// 查找微信缓存目录（跨平台）
+    ///
+    /// 自动检测当前操作系统并查找相应的微信缓存目录。
+    /// 会逐个尝试不同的可能路径，直到找到有效的缓存目录。
+    ///
+    /// # 返回值
+    /// * `Result<PathBuf>` - 成功返回缓存目录路径，失败返回错误
+    ///
+    /// # 错误
+    /// * `Error::CacheNotFound` - 无法找到任何有效的微信缓存目录
     pub fn find_wechat_dirs() -> Result<PathBuf> {
         let home = dirs::home_dir().ok_or_else(|| Error::CacheNotFound)?;
 
@@ -179,6 +554,15 @@ impl WechatCacheResolver {
     }
     
     /// 获取平台特定的微信路径
+    ///
+    /// 根据不同操作系统平台返回相应的微信安装目录列表。
+    /// 使用条件编译确保只返回当前平台相关的路径。
+    ///
+    /// # 参数
+    /// * `home` - 用户主目录路径
+    ///
+    /// # 返回值
+    /// * `Vec<PathBuf>` - 可能的微信安装目录列表
     fn get_platform_paths(home: &Path) -> Vec<PathBuf> {
         let mut paths = Vec::new();
         
@@ -215,6 +599,19 @@ impl WechatCacheResolver {
     }
     
     /// 扫描微信目录结构
+    ///
+    /// 在指定的基本路径中查找微信缓存目录。
+    /// 会递归扫描目录结构，查找以 "wxid_" 开头或包含 "WeChat" 的用户目录。
+    ///
+    /// # 参数
+    /// * `base_path` - 要扫描的基本路径
+    ///
+    /// # 返回值
+    /// * `Result<PathBuf>` - 成功返回缓存目录路径，失败返回错误
+    ///
+    /// # 扫描策略
+    /// 1. 优先在用户目录中查找缓存子目录
+    /// 2. 如果未找到，则在基本路径中直接查找
     fn scan_wechat_directory(base_path: &Path) -> Result<PathBuf> {
         if !base_path.exists() {
             return Err(Error::CacheNotFound);
@@ -259,6 +656,10 @@ impl WechatCacheResolver {
     }
 }
 
+/// 单元测试模块
+///
+/// 包含对文件工具模块各种功能的测试用例。
+/// 使用 tempfile 库创建临时文件和目录进行测试。
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,10 +674,9 @@ mod tests {
         let mut file = fs::File::create(&file_path).unwrap();
         file.write_all(b"Hello, world!").unwrap();
 
-        let mut fileinfo = FileInfo::new(&file_path)
+        let fileinfo = FileInfo::new(&file_path)
             .unwrap();
-        fileinfo.hash().unwrap();
-        assert_eq!(fileinfo.hash.unwrap(), "6cd3556deb0da54bca060b4c39479839");
+        assert_eq!(fileinfo.hash().unwrap(), "6cd3556deb0da54bca060b4c39479839");
     }
 
     #[test]

@@ -252,7 +252,7 @@ mod tests {
             settings.wechat.cache_path,
             Some(PathBuf::from("/custom/path"))
         );
-        assert_eq!(settings.wechat.cache_patterns, vec!["custom_pattern"]);
+        assert_eq!(settings.wechat.cache_patterns, "custom_pattern");
         assert_eq!(settings.cleaning.default_mode, CleaningMode::Auto);
         assert!(!settings.cleaning.preserve_originals);
         assert_eq!(settings.cleaning.min_file_size, 2048);
