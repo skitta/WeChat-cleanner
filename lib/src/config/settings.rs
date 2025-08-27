@@ -56,8 +56,6 @@ pub struct CleaningSettings {
 pub enum CleaningMode {
     /// 自动模式：保留每组中最早的文件
     Auto,
-    /// 智能模式：优先保留原始文件，删除自动生成的副本
-    Smart,
     /// 交互模式：用户手动选择
     Interactive,
 }
@@ -132,7 +130,7 @@ fn default_cache_patterns() -> String {
 }
 
 fn default_cleaning_mode() -> CleaningMode {
-    CleaningMode::Smart
+    CleaningMode::Auto
 }
 
 fn default_preserve_originals() -> bool {
@@ -338,7 +336,7 @@ mod tests {
                 .cache_patterns
                 .contains(&r"\(\d+\)\.[a-zA-Z0-9]+$".to_string())
         );
-        assert_eq!(settings.cleaning.default_mode, CleaningMode::Smart);
+        assert_eq!(settings.cleaning.default_mode, CleaningMode::Auto);
         assert!(settings.cleaning.preserve_originals);
         assert_eq!(settings.cleaning.min_file_size, 1024);
         assert_eq!(settings.ui.theme.primary_color, "blue");
@@ -387,7 +385,7 @@ mod tests {
     #[test]
     fn test_merge_cleaning_settings() {
         let mut base = CleaningSettings {
-            default_mode: CleaningMode::Smart,
+            default_mode: CleaningMode::Auto,
             preserve_originals: true,
             min_file_size: 1024,
             scan_result_save_path: Some(PathBuf::from("/first/temp"))

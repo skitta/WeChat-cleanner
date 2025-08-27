@@ -109,6 +109,7 @@ impl FileScanner {
         self.progress_tracker.report_msg("查找重复文件...");
         let duplicate_files = all_files.duplicates_by_pattern(&regex);
         
+        self.progress_tracker.report_complete();
         Ok(ScanResult::new(*all_files_count, duplicate_files, start_time))
     }
 }

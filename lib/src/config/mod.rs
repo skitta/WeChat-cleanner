@@ -209,7 +209,7 @@ mod tests {
                 .cache_patterns
                 .contains(&r"\(\d+\)\.[a-zA-Z0-9]+$".to_string())
         );
-        assert_eq!(settings.cleaning.default_mode, CleaningMode::Smart);
+        assert_eq!(settings.cleaning.default_mode, CleaningMode::Auto);
         assert_eq!(settings.cleaning.min_file_size, 1024);
         assert_eq!(settings.ui.theme.primary_color, "blue");
         assert_eq!(settings.ui.keybindings.quit, 'q');
