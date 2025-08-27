@@ -1,5 +1,5 @@
 [workspace]
-members = ["lib", "cli",]
+members = ["core", "cli", "display_derive", "display_core"]
 resolver = "2"
 
 [profile.release]

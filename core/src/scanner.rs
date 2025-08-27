@@ -1,7 +1,7 @@
 use crate::config::settings::Settings;
-use crate::core::file_utils::{FileFilter, FileInfo};
+use crate::file_utils::{FileFilter, FileInfo};
 use crate::errors::{Error, Result};
-use crate::core::progressor::{Progress, ProgressTracker, ProgressReporter, ProgressCallback};
+use crate::progressor::{Progress, ProgressTracker, ProgressReporter, ProgressCallback};
 use regex::{Regex};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -9,12 +9,23 @@ use std::path::{Path,PathBuf};
 use std::time::{Duration, Instant};
 use std::fs;
 
+#[cfg(feature = "display")]
+use crate::Display;
+
 /// 扫描结果数据结构（用于序列化/反序列化）
 #[derive(Debug, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "display", derive(Display))]
 pub struct ScanResult {
+    #[cfg_attr(feature = "display", display(summary, name="总文件数"))]
     pub total_files_count: usize,
+    
+    #[cfg_attr(feature = "display", display(summary, name="重复文件数"))]
     pub duplicate_count: usize,
+    
+    #[cfg_attr(feature = "display", display(details, name="重复文件详情"))]
     pub duplicate_files: HashMap<String, Vec<FileInfo>>,
+    
+    #[cfg_attr(feature = "display", display(summary, name="扫描耗时"))]
     pub scan_time: Duration,
 }
 

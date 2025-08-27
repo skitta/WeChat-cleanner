@@ -16,11 +16,11 @@
 //! - 分层处理逻辑：大小 → 模式 → 哈希
 
 use crate::errors::{Error, Result};
+use rayon::prelude::*;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use walkdir::{WalkDir, DirEntry};
-use rayon::prelude::*;
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::fs;
 use std::hash::Hash;
 #[cfg(unix)]
@@ -28,12 +28,12 @@ use std::os::unix::fs::PermissionsExt;
 #[cfg(windows)]
 use std::os::windows::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::collections::HashMap;
+use walkdir::{DirEntry, WalkDir};
 
 /// 设置文件权限（跨平台）
 ///
 /// 根据不同操作系统平台设置文件权限，确保跨平台兼容性。
-/// 
+///
 /// # 参数
 /// * `path` - 要设置权限的文件路径
 /// * `mode` - Unix 权限模式（Windows 下被忽略）
@@ -49,7 +49,7 @@ use std::collections::HashMap;
 /// # 示例
 /// ```rust
 /// use std::path::Path;
-/// 
+///
 /// let path = Path::new("example.txt");
 /// set_file_permissions(&path, 0o644)?;
 /// ```
@@ -60,7 +60,7 @@ pub fn set_file_permissions(path: &Path, mode: u32) -> Result<()> {
         perms.set_mode(mode);
         fs::set_permissions(path, perms)?;
     }
-    
+
     #[cfg(windows)]
     {
         // Windows 上尝试移除只读属性
@@ -72,14 +72,14 @@ pub fn set_file_permissions(path: &Path, mode: u32) -> Result<()> {
         // Windows 下 mode 参数被忽略，因为 Windows 权限模型不同
         let _ = mode; // 避免未使用变量警告
     }
-    
+
     #[cfg(not(any(unix, windows)))]
     {
         // 其他平台的占位实现
         log::warn!("文件权限设置在当前平台不被支持: {}", path.display());
         let _ = mode; // 避免未使用变量警告
     }
-    
+
     Ok(())
 }
 
@@ -94,10 +94,11 @@ pub fn set_file_permissions(path: &Path, mode: u32) -> Result<()> {
 /// # 返回值
 /// * `bool` - 如果是隐藏文件返回 true，否则返回 false
 fn is_hidden(entry: &DirEntry) -> bool {
-    entry.file_name()
-         .to_str()
-         .map(|s| s.starts_with("."))
-         .unwrap_or(false)
+    entry
+        .file_name()
+        .to_str()
+        .map(|s| s.starts_with("."))
+        .unwrap_or(false)
 }
 
 /// 文件信息结构体
@@ -113,7 +114,7 @@ fn is_hidden(entry: &DirEntry) -> bool {
 /// # 示例
 /// ```rust
 /// use std::path::Path;
-/// 
+///
 /// let file_info = FileInfo::new(Path::new("example.txt"))?;
 /// println!("文件大小: {} 字节", file_info.size());
 /// ```
@@ -175,7 +176,7 @@ impl FileInfo {
     /// # 示例
     /// ```rust
     /// use std::path::PathBuf;
-    /// 
+    ///
     /// let path = PathBuf::from("/path/to/cache");
     /// let files = FileInfo::collect_from(&path)?;
     /// println!("找到 {} 个文件", files.len());
@@ -230,10 +231,10 @@ impl FileInfo {
 pub trait Named {
     /// 获取完整文件名（包含扩展名）
     fn name(&self) -> Option<Cow<'_, str>>;
-    
+
     /// 获取文件的基本名称（不包含扩展名）
     fn base_name(&self) -> Option<Cow<'_, str>>;
-    
+
     /// 根据正则表达式提取模式化名称
     ///
     /// 优先使用正则表达式匹配，如果匹配失败则移除扩展名。
@@ -252,7 +253,7 @@ impl Named for FileInfo {
 
     fn patterned_name(&self, regex: &Regex) -> Option<Cow<'_, str>> {
         let file_name = self.name()?;
-        
+
         // 优先使用正则表达式匹配，提取匹配位置之前的部分作为基本名称
         if let Some(captures) = regex.captures(file_name.as_ref()) {
             if let Some(matched) = captures.get(0) {
@@ -262,7 +263,7 @@ impl Named for FileInfo {
                 }
             }
         }
-        
+
         // 如果正则匹配失败，则移除文件扩展名
         if let Some(dot_pos) = file_name.as_ref().rfind(".") {
             Some(Cow::Owned(file_name.as_ref()[..dot_pos].to_owned()))
@@ -287,6 +288,28 @@ impl HasSize for FileInfo {
     }
 }
 
+// 为FileInfo实现DisplayValue
+#[cfg(feature = "display")]
+impl crate::display::DisplayValue for FileInfo {
+    fn format_display(&self) -> String {
+        format!("{} ({})", 
+                self.path.file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy(),
+                crate::display::format_size(self.size))
+    }
+    
+    fn format_display_summary(&self) -> String {
+        self.format_display()
+    }
+    
+    fn format_display_details(&self) -> String {
+        format!("{} ({})",
+                self.path.display(),
+                crate::display::format_size(self.size))
+    }
+}
+
 /// 文件哈希相关操作 trait
 ///
 /// 为文件对象提供计算哈希值的能力。
@@ -302,7 +325,7 @@ pub trait Hashed {
 impl Hashed for FileInfo {
     fn hash(&self) -> Option<String> {
         use md5::{Digest, Md5};
-        use std::io::{Read, BufReader};
+        use std::io::{BufReader, Read};
 
         // 使用 BufReader 优化 I/O 性能
         let file = fs::File::open(&self.path).ok()?;
@@ -326,7 +349,7 @@ impl Hashed for FileInfo {
                 Err(_) => return None, // 读取失败
             }
         }
-        
+
         let result = hasher.finalize();
         Some(format!("{:x}", result))
     }
@@ -353,7 +376,7 @@ pub trait FileGrouper: IntoIterator {
     /// # 返回值
     /// * `HashMap<K, Vec<Self::Item>>` - 按键分组的文件集合
     fn group_by<F, K>(self, key_extractor: F) -> HashMap<K, Vec<Self::Item>>
-    where 
+    where
         Self: Sized,
         F: Fn(&Self::Item) -> Option<K>,
         K: Eq + Hash,
@@ -372,9 +395,9 @@ pub trait FileGrouper: IntoIterator {
     /// 将文件按照大小进行分组，相同大小的文件将被分在同一组。
     /// 这是性能优化的第一步，只有相同大小的文件才可能是重复文件。
     fn group_by_size(self) -> HashMap<u64, Vec<Self::Item>>
-    where 
+    where
         Self: Sized,
-        Self::Item: HasSize
+        Self::Item: HasSize,
     {
         self.group_by(|item| Some(item.size()))
     }
@@ -384,9 +407,9 @@ pub trait FileGrouper: IntoIterator {
     /// 根据正则表达式对文件名进行模式匹配分组。
     /// 用于识别具有类似命名模式的文件（如序号后缀、时间戳等）。
     fn group_by_pattern(self, regex: &Regex) -> HashMap<String, Vec<Self::Item>>
-    where 
+    where
         Self: Sized,
-        Self::Item: Named
+        Self::Item: Named,
     {
         self.group_by(|item| item.patterned_name(regex).map(|name| name.into_owned()))
     }
@@ -400,18 +423,18 @@ pub trait FileGrouper: IntoIterator {
     /// - 使用 rayon 进行并行哈希计算
     /// - 动态调整缓冲区大小以优化性能
     fn group_by_hash(self) -> HashMap<String, Vec<Self::Item>>
-    where 
+    where
         Self: Sized + Send,
         Self::Item: Hashed + Send,
     {
         let items: Vec<_> = self.into_iter().collect();
-        
+
         // 并行计算所有文件的哈希值
         let hash_pairs: Vec<(String, Self::Item)> = items
             .into_par_iter()
             .filter_map(|item| item.hash().map(|hash| (hash, item)))
             .collect();
-        
+
         // 按哈希值分组
         let mut map: HashMap<String, Vec<Self::Item>> = HashMap::new();
         for (hash, item) in hash_pairs {
@@ -453,22 +476,24 @@ pub trait FileFilter: FileGrouper {
     /// # 示例
     /// ```rust
     /// use regex::Regex;
-    /// 
+    ///
     /// let regex = Regex::new(r"_\d+").unwrap(); // 匹配序号后缀
     /// let duplicates = files.duplicates_by_pattern(&regex);
     /// ```
     fn duplicates_by_pattern(self, regex: &Regex) -> HashMap<String, Vec<Self::Item>>
-    where 
+    where
         Self: Sized,
         Self::Item: HasSize + Named + Hashed + Send + Clone,
     {
         // 第一步：按模式分组，分离模式重复和候选文件
-        let (pattern_duplicates, size_candidates): (Vec<_>, Vec<_>) = self.group_by_pattern(regex)
+        let (pattern_duplicates, size_candidates): (Vec<_>, Vec<_>) = self
+            .group_by_pattern(regex)
             .into_par_iter()
             .partition(|(_, items)| items.len() > 1);
 
         // 初始化结果集合，先加入模式重复文件
-        let mut duplicates: HashMap<String, Vec<Self::Item>> = pattern_duplicates.into_iter().collect();
+        let mut duplicates: HashMap<String, Vec<Self::Item>> =
+            pattern_duplicates.into_iter().collect();
 
         // 第二步：对非模式重复文件进行哈希检测
         if !size_candidates.is_empty() {
@@ -477,7 +502,7 @@ pub trait FileFilter: FileGrouper {
                 .into_par_iter()
                 .flat_map(|(_, items)| items)
                 .collect();
-            
+
             // 按大小分组后再按哈希检测
             let hash_duplicate: HashMap<String, Vec<Self::Item>> = candidates
                 .group_by_size()
@@ -489,7 +514,7 @@ pub trait FileFilter: FileGrouper {
                 .into_iter()
                 .filter(|(_, items)| items.len() > 1) // 只保留真正重复的文件组
                 .collect();
-                
+
             duplicates.extend(hash_duplicate);
         }
 
@@ -504,7 +529,6 @@ impl FileFilter for Vec<FileInfo> {}
 /// FileGrouper trait 的通用实现
 /// 为所有 Vec<T> 类型提供分组功能
 impl<T> FileGrouper for Vec<T> {}
-
 
 /// 微信缓存目录解析器（跨平台）
 ///
@@ -543,7 +567,7 @@ impl WechatCacheResolver {
 
         // 尝试不同平台的微信路径
         let search_paths = Self::get_platform_paths(&home);
-        
+
         for base_path in search_paths {
             if let Ok(cache_dir) = Self::scan_wechat_directory(&base_path) {
                 return Ok(cache_dir);
@@ -552,7 +576,7 @@ impl WechatCacheResolver {
 
         Err(Error::CacheNotFound)
     }
-    
+
     /// 获取平台特定的微信路径
     ///
     /// 根据不同操作系统平台返回相应的微信安装目录列表。
@@ -565,13 +589,15 @@ impl WechatCacheResolver {
     /// * `Vec<PathBuf>` - 可能的微信安装目录列表
     fn get_platform_paths(home: &Path) -> Vec<PathBuf> {
         let mut paths = Vec::new();
-        
+
         #[cfg(target_os = "macos")]
         {
             // macOS 微信路径
-            paths.push(home.join("Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files"));
+            paths.push(
+                home.join("Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files"),
+            );
         }
-        
+
         #[cfg(target_os = "windows")]
         {
             // Windows 微信路径
@@ -580,24 +606,28 @@ impl WechatCacheResolver {
                 paths.push(appdata_path.join("Tencent/WeChat/All Users"));
                 paths.push(appdata_path.join("WeChat Files"));
             }
-            
+
             if let Some(documents) = dirs::document_dir() {
                 paths.push(documents.join("WeChat Files"));
                 paths.push(documents.join("Tencent Files"));
             }
         }
-        
+
         #[cfg(target_os = "linux")]
         {
             // Linux 微信路径（通过 Wine 或原生 Linux 版本）
-            paths.push(home.join(".wine/drive_c/users").join(std::env::var("USER").unwrap_or_default()).join("Application Data/Tencent/WeChat"));
+            paths.push(
+                home.join(".wine/drive_c/users")
+                    .join(std::env::var("USER").unwrap_or_default())
+                    .join("Application Data/Tencent/WeChat"),
+            );
             paths.push(home.join(".local/share/applications/WeChat"));
             paths.push(home.join("Documents/WeChat Files"));
         }
-        
+
         paths
     }
-    
+
     /// 扫描微信目录结构
     ///
     /// 在指定的基本路径中查找微信缓存目录。
@@ -619,10 +649,10 @@ impl WechatCacheResolver {
 
         // 尝试查找常见的缓存目录结构
         let cache_subdirs = [
-            "msg/file",           // macOS 微信文件目录
-            "FileStorage",        // Windows 微信文件目录
+            "msg/file",    // macOS 微信文件目录
+            "FileStorage", // Windows 微信文件目录
         ];
-        
+
         // 递归扫描目录
         if let Ok(entries) = fs::read_dir(base_path) {
             for entry in entries.flatten() {
@@ -643,7 +673,7 @@ impl WechatCacheResolver {
                 }
             }
         }
-        
+
         // 如果没有找到用户目录，尝试直接在基本路径中查找缓存目录
         for subdir in &cache_subdirs {
             let cache_path = base_path.join(subdir);
@@ -651,7 +681,7 @@ impl WechatCacheResolver {
                 return Ok(cache_path);
             }
         }
-        
+
         Err(Error::CacheNotFound)
     }
 }
@@ -674,8 +704,7 @@ mod tests {
         let mut file = fs::File::create(&file_path).unwrap();
         file.write_all(b"Hello, world!").unwrap();
 
-        let fileinfo = FileInfo::new(&file_path)
-            .unwrap();
+        let fileinfo = FileInfo::new(&file_path).unwrap();
         assert_eq!(fileinfo.hash().unwrap(), "6cd3556deb0da54bca060b4c39479839");
     }
 
@@ -699,47 +728,57 @@ mod tests {
         println!("{:?}", dirs);
         assert!(dirs.exists());
     }
-    
+
     #[test]
     fn test_cross_platform_file_permissions() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("test_permissions.txt");
-        
+
         let mut file = fs::File::create(&file_path).unwrap();
         file.write_all(b"Permission test").unwrap();
         drop(file);
-        
+
         // 测试文件权限设置（在所有平台上都应该成功）
         let result = set_file_permissions(&file_path, 0o644);
-        assert!(result.is_ok(), "File permission setting should not fail on any platform");
+        assert!(
+            result.is_ok(),
+            "File permission setting should not fail on any platform"
+        );
     }
-    
+
     #[test]
     fn test_get_platform_paths() {
         let home = dirs::home_dir().unwrap();
         let paths = WechatCacheResolver::get_platform_paths(&home);
-        
+
         // 应该至少返回一些路径
-        assert!(!paths.is_empty(), "Should return at least some search paths");
-        
+        assert!(
+            !paths.is_empty(),
+            "Should return at least some search paths"
+        );
+
         // 所有路径都应该是绝对路径
         for path in &paths {
-            assert!(path.is_absolute(), "All paths should be absolute: {:?}", path);
+            assert!(
+                path.is_absolute(),
+                "All paths should be absolute: {:?}",
+                path
+            );
         }
-        
+
         println!("Platform search paths: {:#?}", paths);
     }
-    
+
     #[test]
     fn test_scan_wechat_directory() {
         let dir = tempdir().unwrap();
         let base_path = dir.path();
-        
+
         // 创建模拟的微信目录结构
         let wxid_dir = base_path.join("wxid_test123");
         let cache_dir = wxid_dir.join("msg/file");
         fs::create_dir_all(&cache_dir).unwrap();
-        
+
         // 测试扫描功能
         let result = WechatCacheResolver::scan_wechat_directory(base_path);
         assert!(result.is_ok(), "Should find the created cache directory");

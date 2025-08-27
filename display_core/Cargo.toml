@@ -1,0 +1,7 @@
+[package]
+name = "display_core"
+version = "0.1.0"
+edition = "2021"
+description = "Core traits and implementations for Display system"
+
+[dependencies]

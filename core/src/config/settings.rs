@@ -2,7 +2,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use crate::core::file_utils::WechatCacheResolver;
+use crate::file_utils::WechatCacheResolver;
 
 /// 配置合并策略
 pub trait Merge {
