@@ -3,7 +3,7 @@ pub mod errors;
 pub mod cleaner;
 pub mod scanner;
 pub mod file_utils;
-pub mod progressor;
+pub mod progress;
 
 // Display 功能模块（可选）
 #[cfg(feature = "display")]

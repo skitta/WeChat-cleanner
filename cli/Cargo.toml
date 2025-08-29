@@ -7,6 +7,6 @@ authors = ["skitta <skitta@qq.com>"]
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-core = { path = "../core", version = "0.1.0", package = "core", features = ["display"]}
+core = { path = "../core", version = "0.1.0", package = "core", features = ["display", "cli"]}
 clap = { version = "4.0", features = ["derive", "color", "suggestions"] }
 indicatif = { version = "0.17.8", features = ["rayon"] }

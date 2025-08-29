@@ -245,6 +245,7 @@ dependencies = [
  "display_core",
  "display_derive",
  "humantime",
+ "indicatif",
  "log",
  "md-5",
  "rayon",

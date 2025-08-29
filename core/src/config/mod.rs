@@ -146,36 +146,6 @@ impl ConfigManager {
             }
         }
 
-        // 验证最小文件大小
-        if settings.cleaning.min_file_size > 100 * 1024 * 1024 {
-            return Err(Error::Config(format!(
-                "最小文件大小 {} 过大",
-                settings.cleaning.min_file_size
-            )));
-        }
-
-        // 验证快捷键冲突
-        let keys = [
-            settings.ui.keybindings.quit,
-            settings.ui.keybindings.up,
-            settings.ui.keybindings.down,
-            settings.ui.keybindings.left,
-            settings.ui.keybindings.right,
-            settings.ui.keybindings.confirm,
-            settings.ui.keybindings.delete,
-        ];
-
-        for i in 0..keys.len() {
-            for j in (i + 1)..keys.len() {
-                if keys[i] == keys[j] {
-                    return Err(Error::Config(format!(
-                        "快捷键冲突: '{}' 被分配了多个功能",
-                        keys[i]
-                    )));
-                }
-            }
-        }
-
         Ok(())
     }
 
@@ -209,10 +179,7 @@ mod tests {
                 .cache_patterns
                 .contains(&r"\(\d+\)\.[a-zA-Z0-9]+$".to_string())
         );
-        assert_eq!(settings.cleaning.default_mode, CleaningMode::Auto);
-        assert_eq!(settings.cleaning.min_file_size, 1024);
-        assert_eq!(settings.ui.theme.primary_color, "blue");
-        assert_eq!(settings.ui.keybindings.quit, 'q');
+        assert_eq!(settings.cleaning.mode, CleaningMode::Auto);
     }
 
     #[test]
@@ -253,12 +220,7 @@ mod tests {
             Some(PathBuf::from("/custom/path"))
         );
         assert_eq!(settings.wechat.cache_patterns, "custom_pattern");
-        assert_eq!(settings.cleaning.default_mode, CleaningMode::Auto);
-        assert!(!settings.cleaning.preserve_originals);
-        assert_eq!(settings.cleaning.min_file_size, 2048);
-        assert_eq!(settings.ui.theme.primary_color, "red");
-        assert_eq!(settings.ui.keybindings.quit, 'x');
-        assert_eq!(settings.ui.keybindings.up, 'w');
+        assert_eq!(settings.cleaning.mode, CleaningMode::Auto);
     }
 
     #[test]
@@ -278,18 +240,9 @@ mod tests {
 
         // 测试文件大小过大
         manager.settings_mut().wechat.cache_path = None;
-        manager.settings_mut().cleaning.min_file_size = 200 * 1024 * 1024;
         let result = manager.validate();
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("最小文件大小"));
-
-        // 测试快捷键冲突
-        manager.settings_mut().cleaning.min_file_size = 1024;
-        manager.settings_mut().ui.keybindings.quit = 'a';
-        manager.settings_mut().ui.keybindings.up = 'a';
-        let result = manager.validate();
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("快捷键冲突"));
     }
 
     #[test]
@@ -299,10 +252,6 @@ mod tests {
 
         let mut manager = ConfigManager::new().unwrap();
         manager.config_path = Some(config_path.clone());
-
-        // 修改一些设置
-        manager.settings_mut().ui.theme.primary_color = "purple".to_string();
-        manager.settings_mut().cleaning.min_file_size = 8192;
 
         // 保存配置
         manager.save().unwrap();
@@ -332,19 +281,13 @@ mod tests {
         // 创建简单的配置文件
         let mut file = File::create(&config_path).unwrap();
         file.write_all(
-            b"[wechat]\ncache_patterns = [\"test_pattern\"]\n\n[cleaning]\ndefault_mode = \"auto\"\npreserve_originals = false\nmin_file_size = 2048\n\n[ui.theme]\nprimary_color = \"red\"\nsecondary_color = \"green\"\nhighlight_color = \"yellow\"\n\n[ui.keybindings]\nquit = 'x'\nup = 'w'\ndown = 's'\nleft = 'a'\nright = 'd'\nconfirm = ' '\ndelete = 'r'\n"
+            b"[wechat]\ncache_patterns = [\"test_pattern\"]\n\n[cleaning]\ndefault_mode = \"auto\"\n"
         ).unwrap();
         
         let mut manager = ConfigManager::new().unwrap();
-        let original_size = manager.settings.cleaning.min_file_size;
         
         // 加载文件配置
         manager.merge_from_file(&config_path, ConfigSourceType::User).unwrap();
-        
-        // 文件配置应该覆盖默认配置
-        assert_ne!(manager.settings.cleaning.min_file_size, original_size);
-        assert_eq!(manager.settings.cleaning.min_file_size, 2048);
-        assert_eq!(manager.settings.ui.theme.primary_color, "red");
-        assert_eq!(manager.settings.ui.keybindings.quit, 'x');
+
     }
 }

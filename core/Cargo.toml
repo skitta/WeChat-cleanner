@@ -30,6 +30,8 @@ bytesize = "1.3.0"
 # Display 功能相关依赖（可选）
 display_core = { path = "../display_core", optional = true }
 display_derive = { path = "../display_derive", optional = true }
+# CLI 功能相关依赖（可选）
+indicatif = { version = "0.17.8", optional = true }
 
 [dev-dependencies]
 tempfile = "3.20.0"
@@ -40,3 +42,5 @@ default = ["display"]
 native-optimizations = []
 # Display 功能特性
 display = ["dep:display_core", "dep:display_derive"]
+# CLI 功能特性
+cli = ["dep:indicatif"]

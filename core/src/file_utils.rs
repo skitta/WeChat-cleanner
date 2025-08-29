@@ -120,7 +120,7 @@ fn is_hidden(entry: &DirEntry) -> bool {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileInfo {
-    pub path: PathBuf,
+    path: PathBuf,
     size: u64,
     pub modified: u64,
 }
@@ -181,10 +181,10 @@ impl FileInfo {
     /// let files = FileInfo::collect_from(&path)?;
     /// println!("找到 {} 个文件", files.len());
     /// ```
-    pub fn collect_from(path: &PathBuf) -> Result<Vec<Self>> {
+    pub fn collect_from(path: &PathBuf) -> Option<Vec<Self>> {
         // 先检查路径是否存在
         if !path.exists() {
-            return Err(Error::CacheNotFound);
+            return None;
         }
 
         // 优化1: 首先收集所有文件路径（快速操作）
@@ -196,7 +196,7 @@ impl FileInfo {
             .collect();
 
         if file_entries.is_empty() {
-            return Err(Error::CacheNotFound);
+            return None;
         }
 
         // 优化2: 预分配容量并使用并行处理进行元数据收集
@@ -206,10 +206,10 @@ impl FileInfo {
                 // 优化3: 减少错误处理开销，只记录严重错误
                 match FileInfo::new(entry.path()) {
                     Ok(info) => Some(info),
-                    Err(e) => {
+                    Err(_e) => {
                         // 只在 debug 模式下记录详细日志
                         #[cfg(debug_assertions)]
-                        log::warn!("Failed to process {}: {}", entry.path().display(), e);
+                        log::warn!("Failed to process {}: {}", entry.path().display(), _e);
                         None
                     }
                 }
@@ -217,9 +217,9 @@ impl FileInfo {
             .collect();
 
         if files.is_empty() {
-            Err(Error::CacheNotFound)
+            None
         } else {
-            Ok(files)
+            Some(files)
         }
     }
 }
@@ -288,25 +288,13 @@ impl HasSize for FileInfo {
     }
 }
 
-// 为FileInfo实现DisplayValue
-#[cfg(feature = "display")]
-impl crate::display::DisplayValue for FileInfo {
-    fn format_display(&self) -> String {
-        format!("{} ({})", 
-                self.path.file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy(),
-                crate::display::format_size(self.size))
-    }
-    
-    fn format_display_summary(&self) -> String {
-        self.format_display()
-    }
-    
-    fn format_display_details(&self) -> String {
-        format!("{} ({})",
-                self.path.display(),
-                crate::display::format_size(self.size))
+pub trait HasPath {
+    fn path(&self) -> &PathBuf;
+}
+
+impl HasPath for FileInfo {
+    fn path(&self) -> &PathBuf {
+        &self.path
     }
 }
 
@@ -442,6 +430,18 @@ pub trait FileGrouper: IntoIterator {
         }
         map
     }
+
+    fn group_by_parent(self) -> HashMap<PathBuf, Vec<Self::Item>>
+    where 
+        Self: Sized,
+        Self::Item: HasPath,
+    {
+        self.into_iter().fold(HashMap::new(), |mut acc, file| {
+            let parent = file.path().parent().unwrap_or("/".as_ref()).to_path_buf();
+            acc.entry(parent).or_default().push(file);
+            acc
+        })
+    }
 }
 
 /// 文件过滤与重复检测 trait
@@ -522,6 +522,42 @@ pub trait FileFilter: FileGrouper {
     }
 }
 
+pub trait FileProcessor {
+    type ProcessResult;
+    fn delete(&self) -> Result<Self::ProcessResult>;
+}
+
+impl FileProcessor for FileInfo {
+    type ProcessResult = bool;
+    fn delete(&self) -> Result<bool> {
+        fs::remove_file(&self.path)
+            .map(|_| {
+                log::debug!("已删除: {}", self.path.display());
+                true
+            })
+            .map_err(|e| {
+                Error::FileProcessing(format!(
+                    "删除失败: {} - {}", self.path.display(), e
+                ))
+            })
+    }
+}
+
+impl FileProcessor for Vec<FileInfo> {
+    type ProcessResult = Vec<FileInfo>;
+    // TODO: 检验是否会因为错误中断
+    fn delete(&self) -> Result<Vec<FileInfo>> {
+        self.into_iter()
+            .filter_map(|f| match f.delete() {
+                Ok(true) => Some(Ok(f.to_owned())),
+                Ok(false) => None,
+                Err(e) => Some(Err(e))
+            })
+            .collect()
+    }
+}
+
+
 // Trait 实现
 /// FileFilter trait 为 FileInfo 的实现
 impl FileFilter for Vec<FileInfo> {}
@@ -529,6 +565,28 @@ impl FileFilter for Vec<FileInfo> {}
 /// FileGrouper trait 的通用实现
 /// 为所有 Vec<T> 类型提供分组功能
 impl<T> FileGrouper for Vec<T> {}
+
+// 为FileInfo实现DisplayValue
+#[cfg(feature = "display")]
+impl crate::display::DisplayValue for FileInfo {
+    fn format_display(&self) -> String {
+        format!("{} ({})", 
+                self.path.file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy(),
+                crate::display::format_size(self.size))
+    }
+    
+    fn format_display_summary(&self) -> String {
+        self.format_display()
+    }
+    
+    fn format_display_details(&self) -> String {
+        format!("{} ({})",
+                self.path.display(),
+                crate::display::format_size(self.size))
+    }
+}
 
 /// 微信缓存目录解析器（跨平台）
 ///
