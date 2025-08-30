@@ -1,7 +1,7 @@
 //! 文件清理模块
 //!
 //! 提供重复文件的清理功能，支持自动清理模式和安全的删除操作。
-use crate::config::settings::{CleaningMode, CleaningSettings};
+use crate::config::settings::{CleaningMode, ScannerSettings};
 use crate::errors::{Error, Result};
 use crate::file_utils::{FileGrouper, FileInfo, FileProcessor, HasSize};
 use crate::progress::Progress;
@@ -39,17 +39,6 @@ pub struct CleaningPreview {
 
     #[cfg_attr(feature = "display", display(details, name = "文件分组详情"))]
     pub file_groups: HashMap<PathBuf, PreviewGroup>,
-}
-
-// 手动实现 Display trait 作为备用
-impl std::fmt::Display for CleaningPreview {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "预计删除文件数: {}, 预计释放空间: {} 字节",
-            self.estimated_files_count, self.estimated_freed_space
-        )
-    }
 }
 
 /// 预览组，表示一个文件夹中的文件清理情况
@@ -103,30 +92,6 @@ impl CleaningPreview {
             })
         }
     }
-}
-
-/// 文件清理器
-pub struct FileCleaner {
-    pub preview: CleaningPreview,
-    scan_result: ScanResult,
-}
-
-impl FileCleaner {
-    /// 创建新的文件清理器
-    pub fn new(settings: CleaningSettings) -> Result<Self> {
-        let result_path = settings
-            .scan_result_save_path
-            .as_ref()
-            .ok_or(Error::Config(
-                "扫描结果保存路径不合法".to_string(),
-            ))?;
-
-        let scan_result = ScanResult::load(result_path)?;
-
-        let preview = CleaningPreview::from(&scan_result).ok_or(Error::FileProcessing("找到扫描结果，但无可清理文件".to_string()))?;
-
-        Ok(FileCleaner { preview, scan_result })
-    }
 
     /// 执行文件清理（支持预览模式）
     pub fn clean(&self, mode: CleaningMode) -> Option<CleaningResult> {
@@ -135,7 +100,7 @@ impl FileCleaner {
 
     /// 带进度显示的文件清理
     pub fn clean_with_progress(&self, mode: CleaningMode, progress: &Progress) -> Option<CleaningResult> {
-        if self.preview.estimated_files_count == 0 {
+        if self.estimated_files_count == 0 {
             progress.set_message("没有需要清理的文件");
             return None;
         }
@@ -151,11 +116,11 @@ impl FileCleaner {
 
     fn execute_deletion(&self, progress: &Progress) -> Result<CleaningResult> {
         let start_time = Instant::now();
-        let total = self.preview.file_groups.len();
+        let total = self.file_groups.len();
 
         progress.set_message("执行清理中...");
         let mut deleted_files = HashMap::new();
-        for (idx, (parent, group)) in self.preview.file_groups.iter().enumerate() {
+        for (idx, (parent, group)) in self.file_groups.iter().enumerate() {
             let deleted = group.files_to_delete.delete()?;
             if !deleted.is_empty() {
                 deleted_files.insert(parent.clone(), deleted);
@@ -163,9 +128,6 @@ impl FileCleaner {
             progress.update(idx + 1, total, &format!("清理进度: {}/{}", idx + 1, total));
         }
         progress.finish("清理完成");
-        
-        //清除完成后删除扫描记录
-        self.scan_result.delete()?;
         
         Ok(CleaningResult {
             files_deleted: deleted_files.values().map(Vec::len).sum(),
@@ -176,5 +138,32 @@ impl FileCleaner {
                 .sum(),
             clean_time: start_time.elapsed(),
         })
+    }
+}
+
+/// 文件清理器
+/// 
+/// 实现了清晰的链式调用方式
+/// ```rust
+/// FileCleaner::new(settings)?.preview()?.clean(mode);
+/// ```
+pub struct FileCleaner {
+    scan_result: ScanResult,
+}
+
+impl FileCleaner {
+    /// 创建新的文件清理器
+    pub fn new(settings: &ScannerSettings) -> Result<Self> {
+        let scan_result = ScanResult::load(&settings.save_path)?;
+
+        Ok(FileCleaner { scan_result })
+    }
+
+    pub fn preview(&self) -> Result<CleaningPreview> {
+        CleaningPreview::from(&self.scan_result).ok_or(Error::FileProcessing("找到扫描结果，但无可清理文件".to_string()))
+    }
+
+    pub fn delete_scan_result(&self) -> Result<()> {
+        self.scan_result.delete()
     }
 }

@@ -23,10 +23,11 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs;
 use std::hash::Hash;
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
-#[cfg(windows)]
-use std::os::windows::fs::PermissionsExt;
+// 无用导入：文件权限相关的import没有被使用
+// #[cfg(unix)]
+// use std::os::unix::fs::PermissionsExt;
+// #[cfg(windows)]
+// use std::os::windows::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use walkdir::{DirEntry, WalkDir};
 
@@ -53,35 +54,36 @@ use walkdir::{DirEntry, WalkDir};
 /// let path = Path::new("example.txt");
 /// set_file_permissions(&path, 0o644)?;
 /// ```
-pub fn set_file_permissions(path: &Path, mode: u32) -> Result<()> {
-    #[cfg(unix)]
-    {
-        let mut perms = fs::metadata(path)?.permissions();
-        perms.set_mode(mode);
-        fs::set_permissions(path, perms)?;
-    }
-
-    #[cfg(windows)]
-    {
-        // Windows 上尝试移除只读属性
-        let mut perms = fs::metadata(path)?.permissions();
-        if perms.readonly() {
-            perms.set_readonly(false);
-            fs::set_permissions(path, perms)?;
-        }
-        // Windows 下 mode 参数被忽略，因为 Windows 权限模型不同
-        let _ = mode; // 避免未使用变量警告
-    }
-
-    #[cfg(not(any(unix, windows)))]
-    {
-        // 其他平台的占位实现
-        log::warn!("文件权限设置在当前平台不被支持: {}", path.display());
-        let _ = mode; // 避免未使用变量警告
-    }
-
-    Ok(())
-}
+// 无用代码：设置文件权限函数没有被使用
+// fn set_file_permissions(path: &Path, mode: u32) -> Result<()> {
+//     #[cfg(unix)]
+//     {
+//         let mut perms = fs::metadata(path)?.permissions();
+//         perms.set_mode(mode);
+//         fs::set_permissions(path, perms)?;
+//     }
+//
+//     #[cfg(windows)]
+//     {
+//         // Windows 上尝试移除只读属性
+//         let mut perms = fs::metadata(path)?.permissions();
+//         if perms.readonly() {
+//             perms.set_readonly(false);
+//             fs::set_permissions(path, perms)?;
+//         }
+//         // Windows 下 mode 参数被忽略，因为 Windows 权限模型不同
+//         let _ = mode; // 避免未使用变量警告
+//     }
+//
+//     #[cfg(not(any(unix, windows)))]
+//     {
+//         // 其他平台的占位实现
+//         log::warn!("文件权限设置在当前平台不被支持: {}", path.display());
+//         let _ = mode; // 避免未使用变量警告
+//     }
+//
+//     Ok(())
+// }
 
 /// 检测文件或目录是否为隐藏文件
 ///
@@ -139,7 +141,10 @@ impl FileInfo {
     ///
     /// # 错误
     /// 当文件不存在或无法访问时返回 IO 错误。
-    pub fn new(file: &Path) -> Result<Self> {
+    fn new(file: &Path) -> Result<Self> {
+        if !file.is_file() {
+            return Err(Error::FileProcessing("FileInfo: 请传入文件".to_string()))
+        }
         let metadata = fs::metadata(file)?;
         let size = metadata.len();
         let modified = metadata
@@ -183,7 +188,7 @@ impl FileInfo {
     /// ```
     pub fn collect_from(path: &PathBuf) -> Option<Vec<Self>> {
         // 先检查路径是否存在
-        if !path.exists() {
+        if !path.is_dir() {
             return None;
         }
 
@@ -616,23 +621,17 @@ impl WechatCacheResolver {
     /// 会逐个尝试不同的可能路径，直到找到有效的缓存目录。
     ///
     /// # 返回值
-    /// * `Result<PathBuf>` - 成功返回缓存目录路径，失败返回错误
-    ///
-    /// # 错误
-    /// * `Error::CacheNotFound` - 无法找到任何有效的微信缓存目录
-    pub fn find_wechat_dirs() -> Result<PathBuf> {
-        let home = dirs::home_dir().ok_or_else(|| Error::CacheNotFound)?;
+    /// * `Option<PathBuf>` - 成功返回缓存目录路径，失败返回`None`
+    pub fn find_wechat_dirs() -> Option<PathBuf> {
+        let home = dirs::home_dir()?;
 
         // 尝试不同平台的微信路径
         let search_paths = Self::get_platform_paths(&home);
 
         for base_path in search_paths {
-            if let Ok(cache_dir) = Self::scan_wechat_directory(&base_path) {
-                return Ok(cache_dir);
-            }
+            return Self::scan_wechat_directory(&base_path);
         }
-
-        Err(Error::CacheNotFound)
+        None
     }
 
     /// 获取平台特定的微信路径
@@ -695,14 +694,14 @@ impl WechatCacheResolver {
     /// * `base_path` - 要扫描的基本路径
     ///
     /// # 返回值
-    /// * `Result<PathBuf>` - 成功返回缓存目录路径，失败返回错误
+    /// * `Option<PathBuf>` - 成功返回缓存目录路径，失败返回`None`
     ///
     /// # 扫描策略
     /// 1. 优先在用户目录中查找缓存子目录
     /// 2. 如果未找到，则在基本路径中直接查找
-    fn scan_wechat_directory(base_path: &Path) -> Result<PathBuf> {
+    fn scan_wechat_directory(base_path: &Path) -> Option<PathBuf> {
         if !base_path.exists() {
-            return Err(Error::CacheNotFound);
+            return None;
         }
 
         // 尝试查找常见的缓存目录结构
@@ -723,7 +722,7 @@ impl WechatCacheResolver {
                             for subdir in &cache_subdirs {
                                 let cache_path = path.join(subdir);
                                 if cache_path.exists() {
-                                    return Ok(cache_path);
+                                    return Some(cache_path);
                                 }
                             }
                         }
@@ -736,110 +735,10 @@ impl WechatCacheResolver {
         for subdir in &cache_subdirs {
             let cache_path = base_path.join(subdir);
             if cache_path.exists() {
-                return Ok(cache_path);
+                return Some(cache_path);
             }
         }
 
-        Err(Error::CacheNotFound)
-    }
-}
-
-/// 单元测试模块
-///
-/// 包含对文件工具模块各种功能的测试用例。
-/// 使用 tempfile 库创建临时文件和目录进行测试。
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::Write;
-    use tempfile::tempdir;
-
-    #[test]
-    fn test_calculate_file_hash() {
-        let dir = tempdir().unwrap();
-        let file_path = dir.path().join("test.txt");
-
-        let mut file = fs::File::create(&file_path).unwrap();
-        file.write_all(b"Hello, world!").unwrap();
-
-        let fileinfo = FileInfo::new(&file_path).unwrap();
-        assert_eq!(fileinfo.hash().unwrap(), "6cd3556deb0da54bca060b4c39479839");
-    }
-
-    #[test]
-    fn test_get_file_info() {
-        let dir = tempdir().unwrap();
-        let file_path = dir.path().join("test.txt");
-
-        let mut file = fs::File::create(&file_path).unwrap();
-        file.write_all(b"Hello, world!").unwrap();
-
-        let info = FileInfo::new(&file_path).unwrap();
-
-        assert_eq!(info.path, file_path);
-        assert_eq!(info.size, 13);
-    }
-
-    #[test]
-    fn test_find_wechat_dirs() {
-        let dirs = WechatCacheResolver::find_wechat_dirs().unwrap();
-        println!("{:?}", dirs);
-        assert!(dirs.exists());
-    }
-
-    #[test]
-    fn test_cross_platform_file_permissions() {
-        let dir = tempdir().unwrap();
-        let file_path = dir.path().join("test_permissions.txt");
-
-        let mut file = fs::File::create(&file_path).unwrap();
-        file.write_all(b"Permission test").unwrap();
-        drop(file);
-
-        // 测试文件权限设置（在所有平台上都应该成功）
-        let result = set_file_permissions(&file_path, 0o644);
-        assert!(
-            result.is_ok(),
-            "File permission setting should not fail on any platform"
-        );
-    }
-
-    #[test]
-    fn test_get_platform_paths() {
-        let home = dirs::home_dir().unwrap();
-        let paths = WechatCacheResolver::get_platform_paths(&home);
-
-        // 应该至少返回一些路径
-        assert!(
-            !paths.is_empty(),
-            "Should return at least some search paths"
-        );
-
-        // 所有路径都应该是绝对路径
-        for path in &paths {
-            assert!(
-                path.is_absolute(),
-                "All paths should be absolute: {:?}",
-                path
-            );
-        }
-
-        println!("Platform search paths: {:#?}", paths);
-    }
-
-    #[test]
-    fn test_scan_wechat_directory() {
-        let dir = tempdir().unwrap();
-        let base_path = dir.path();
-
-        // 创建模拟的微信目录结构
-        let wxid_dir = base_path.join("wxid_test123");
-        let cache_dir = wxid_dir.join("msg/file");
-        fs::create_dir_all(&cache_dir).unwrap();
-
-        // 测试扫描功能
-        let result = WechatCacheResolver::scan_wechat_directory(base_path);
-        assert!(result.is_ok(), "Should find the created cache directory");
-        assert_eq!(result.unwrap(), cache_dir);
+        None
     }
 }

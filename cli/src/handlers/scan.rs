@@ -2,8 +2,9 @@
 
 use core::scanner::{FileScanner};
 use core::progress::Progress;
+use core::display::*;
 
-use crate::{AppResult, operations::CliOperations, display::display};
+use crate::{AppResult, operations::CliOperations};
 
 /// 扫描操作处理器
 pub struct ScanHandler<'a> {
@@ -20,7 +21,12 @@ impl<'a> ScanHandler<'a> {
         let mut scanner = FileScanner::new(self.ops.settings().clone());
         let progress = Progress::Bar(self.ops.create_progress_bar()?);
         if let Some(result) = scanner.scan_with_progress(&progress) {
-            display(&result, verbose);
+            if verbose {
+                println!("{}", result.display_details());
+            } else {
+                println!("{}", result.display_summary());
+            }
+            
             result.save()?;
         }
         

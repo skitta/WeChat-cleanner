@@ -33,7 +33,7 @@ pub struct ScanResult {
 }
 
 impl ScanResult {
-    pub fn new(save_path: PathBuf, total_files_count: usize, duplicate_files: HashMap<String, Vec<FileInfo>>, start_time: Instant) -> Self {
+    fn new(save_path: PathBuf, total_files_count: usize, duplicate_files: HashMap<String, Vec<FileInfo>>, start_time: Instant) -> Self {
         ScanResult {
             path: save_path,
             total_files_count,
@@ -112,12 +112,12 @@ impl FileScanner {
         let duplicate_files = all_files.duplicates_by_pattern(&regex);
 
         let save_path = self.settings
-            .cleaning
-            .scan_result_save_path
-            .as_ref()?;
+            .scanner
+            .save_path
+            .join("wechat-cleaner/scan-result.json");
 
         let result = ScanResult::new(
-            save_path.clone(),
+            save_path,
             *all_files_count,
             duplicate_files,
             start_time,

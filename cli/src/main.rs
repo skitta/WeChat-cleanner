@@ -14,14 +14,12 @@
 //! - 交互式确认机制
 //! - 详细的统计信息
 
-mod display;
 mod operations;
 mod handlers;
 
 use clap::{Parser, Subcommand};
 use operations::CliOperations;
 use handlers::{ScanHandler, CleanerHandler, ConfigHandler};
-use display::display_error;
 
 /// 应用错误类型
 type AppResult<T> = Result<T, Box<dyn std::error::Error>>;
@@ -58,7 +56,15 @@ enum Commands {
 
 fn main() {
     if let Err(err) = run() {
-        display_error(err.as_ref());
+        eprintln!("❌ {}", err);
+    
+        // 显示错误链
+        let mut source = err.source();
+        while let Some(err) = source {
+            eprintln!("   └─ 原因: {}", err);
+            source = err.source();
+        }
+
         std::process::exit(1);
     }
 }

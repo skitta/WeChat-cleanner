@@ -28,7 +28,7 @@ impl Default for ProgressConfig {
 
 /// CLI 操作核心结构
 pub struct CliOperations {
-    pub config_manager: ConfigManager,
+    config_manager: ConfigManager,
 }
 
 impl CliOperations {

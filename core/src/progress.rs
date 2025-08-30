@@ -26,7 +26,11 @@ impl Progress {
     /// 更新进度
     pub fn update(&self, current: usize, total: usize, message: &str) {
         match self {
-            Progress::None => { println!("{message}") },
+            Progress::None => { 
+                // 在None模式下，我们只显示消息，不需要current和total
+                let _ = (current, total);
+                println!("{message}") 
+            },
             #[cfg(feature = "cli")]
             Progress::Bar(bar) => {
                 if total > 0 {
@@ -63,7 +67,10 @@ impl Progress {
     /// 增量更新进度
     pub fn increment(&self, message: &str) {
         match self {
-            Progress::None => {},
+            Progress::None => {
+                // 在None模式下，我们不需要显示消息
+                let _ = message;
+            },
             #[cfg(feature = "cli")]
             Progress::Bar(bar) => {
                 bar.inc(1);
