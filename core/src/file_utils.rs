@@ -143,7 +143,7 @@ impl FileInfo {
     /// 当文件不存在或无法访问时返回 IO 错误。
     fn new(file: &Path) -> Result<Self> {
         if !file.is_file() {
-            return Err(Error::FileProcessing("FileInfo: 请传入文件".to_string()))
+            return Err(Error::FileProcessing("FileInfo: 请传入一个文件".to_string()))
         }
         let metadata = fs::metadata(file)?;
         let size = metadata.len();

@@ -1,20 +1,8 @@
 [wechat]
-cache_patterns = ["\\(\\d+\\)\\.[a-zA-Z0-9]+$", "-\\d{13}\\."]
+cache_patterns = "\\(\\d+\\)\\.[a-zA-Z0-9]+$"
 
-[cleaning]
-default_mode = "smart"
-preserve_originals = true
-min_file_size = 2048      # 2KB
+[scanner]
+save_path = "~/Downloads/"
 
-[ui]
-theme.primary_color = "blue"
-theme.secondary_color = "green"
-theme.highlight_color = "yellow"
-
-[ui.keybindings]
-quit = 'q'
-up = 'k'
-down = 'j'
-left = 'h'
-right = 'l'
-delete = 'd'
+[cleaner]
+mode = "auto"
