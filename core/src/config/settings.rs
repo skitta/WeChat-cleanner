@@ -102,8 +102,12 @@ impl Merge for Settings {
 impl Merge for WechatSettings {
     fn merge(&mut self, other: Self) {
         // 如果 other 中有新的路径，则更新
-        if other.cache_path.is_some() {
-            self.cache_path = other.cache_path;
+        if let Some(path) = other.cache_path {
+            if !path.exists() {
+                println!("配置的微信缓存路径不存在，将使用默认路径")
+            } else {
+                self.cache_path = Some(path);
+            }
         }
         
         // 如果 other 中有非空的模式列表，则更新
@@ -116,7 +120,11 @@ impl Merge for WechatSettings {
 impl Merge for ScannerSettings {
     fn merge(&mut self, other: Self) {
         // 清理模式直接更新（枚举类型没有“空”状态）
-        self.save_path = other.save_path;
+        if !other.save_path.exists() {
+            print!("配置的扫描数据保存路径不存在")
+        } else {
+            self.save_path = other.save_path;
+        }
     }
 }
 

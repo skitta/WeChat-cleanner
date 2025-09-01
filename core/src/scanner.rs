@@ -1,4 +1,4 @@
-use crate::config::settings::Settings;
+use crate::config::settings::{ScannerSettings, WechatSettings};
 use crate::file_utils::{FileFilter, FileInfo};
 use crate::errors::{Error, Result};
 use crate::progress::Progress;
@@ -75,30 +75,30 @@ impl ScanResult {
 
 /// 文件扫描器
 pub struct FileScanner {
-    settings: Settings,
+    path: PathBuf,
+    pattern: Regex,
 }
 
 impl FileScanner {
     /// 创建新的文件扫描器
-    pub fn new(settings: Settings) -> Self {
-        FileScanner {
-            settings,
-        }
+    pub fn new(settings: &WechatSettings) -> Result<Self> {
+        let path = settings.cache_path.clone().ok_or(Error::CacheNotFound)?;
+        let pattern = Regex::new(&settings.cache_patterns)?;
+        Ok(FileScanner { path, pattern })
     }
 
     /// 执行文件扫描
-    pub fn scan(&mut self) -> Option<ScanResult> {
-        self.scan_with_progress(&Progress::none())
+    pub fn scan(&self, settings: &ScannerSettings) -> Option<ScanResult> {
+        self.scan_with_progress(settings, &Progress::none())
     }
 
     /// 带进度显示的文件扫描
-    pub fn scan_with_progress(&mut self, progress: &Progress) -> Option<ScanResult> {
+    pub fn scan_with_progress(&self, settings: &ScannerSettings, progress: &Progress) -> Option<ScanResult> {
         let start_time = Instant::now();
         progress.set_message("开始扫描微信缓存文件...");
         
-        let cache_path = self.settings.wechat.cache_path.as_ref()?;
         progress.set_message("收集文件元数据...");
-        let all_files = FileInfo::collect_from(&cache_path)?;
+        let all_files = FileInfo::collect_from(&self.path)?;
         let all_files_count = &all_files.len();
 
         if all_files_count == &0 {
@@ -106,13 +106,9 @@ impl FileScanner {
             return None;
         }
 
-        let pattern = self.settings.wechat.cache_patterns.as_ref();
-        let regex = Regex::new(pattern).ok()?;
-        progress.set_message("查找重复文件...");
-        let duplicate_files = all_files.duplicates_by_pattern(&regex);
+        let duplicate_files = all_files.duplicates_by_pattern(&self.pattern);
 
-        let save_path = self.settings
-            .scanner
+        let save_path = settings
             .save_path
             .join("wechat-cleaner/scan-result.json");
 

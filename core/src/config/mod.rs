@@ -39,9 +39,6 @@ impl ConfigManager {
             }
         }
 
-        // 3. 验证配置
-        self.validate()?;
-
         Ok(())
     }
 
@@ -55,32 +52,6 @@ impl ConfigManager {
 
         self.settings.merge(file_settings);
         
-        Ok(())
-    }
-
-    /// 验证配置
-    fn validate(&self) -> Result<()> {
-        let settings = &self.settings;
-
-        // 验证微信缓存路径
-        if let Some(path) = &settings.wechat.cache_path {
-            if !path.exists() {
-                return Err(Error::Config(format!(
-                    "微信缓存路径不存在: {}",
-                    path.display()
-                )));
-            }
-        }
-
-        // 验证扫描数据保存路径
-        let scan_result_save_path = &settings.scanner.save_path;
-        if !scan_result_save_path.exists() {
-            return Err(Error::Config(format!(
-                "扫描数据保存路径不存在: {}",
-                scan_result_save_path.display()
-            )));
-        }
-
         Ok(())
     }
 

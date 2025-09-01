@@ -18,9 +18,12 @@ impl<'a> ScanHandler<'a> {
     }
 
     pub fn execute(&self, verbose: bool) -> AppResult<()> {
-        let mut scanner = FileScanner::new(self.ops.settings().clone());
+        let scanner = FileScanner::new(&self.ops.settings().wechat)?;
+        
         let progress = Progress::Bar(self.ops.create_progress_bar()?);
-        if let Some(result) = scanner.scan_with_progress(&progress) {
+        let settings = &self.ops.settings().scanner;
+        
+        if let Some(result) = scanner.scan_with_progress(settings, &progress) {
             if verbose {
                 println!("{}", result.display_details());
             } else {

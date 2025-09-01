@@ -186,7 +186,7 @@ impl FileInfo {
     /// let files = FileInfo::collect_from(&path)?;
     /// println!("找到 {} 个文件", files.len());
     /// ```
-    pub fn collect_from(path: &PathBuf) -> Option<Vec<Self>> {
+    pub fn collect_from(path: &Path) -> Option<Vec<Self>> {
         // 先检查路径是否存在
         if !path.is_dir() {
             return None;
