@@ -121,7 +121,7 @@ impl Merge for ScannerSettings {
     fn merge(&mut self, other: Self) {
         // 清理模式直接更新（枚举类型没有“空”状态）
         if !other.save_path.exists() {
-            print!("配置的扫描数据保存路径不存在")
+            println!("配置的扫描数据保存路径不存在, 将使用默认路径")
         } else {
             self.save_path = other.save_path;
         }

@@ -144,9 +144,6 @@ impl CleaningPreview {
 /// 文件清理器
 /// 
 /// 实现了清晰的链式调用方式
-/// ```rust
-/// FileCleaner::new(settings)?.preview()?.clean(mode);
-/// ```
 pub struct FileCleaner {
     scan_result: ScanResult,
 }
@@ -154,7 +151,8 @@ pub struct FileCleaner {
 impl FileCleaner {
     /// 创建新的文件清理器
     pub fn new(settings: &ScannerSettings) -> Result<Self> {
-        let scan_result = ScanResult::load(&settings.save_path)?;
+        let result_path = settings.save_path.join("wechat-cleaner/scan-result.json");
+        let scan_result = ScanResult::load(&result_path)?;
 
         Ok(FileCleaner { scan_result })
     }

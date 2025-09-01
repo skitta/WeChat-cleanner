@@ -32,7 +32,7 @@ pub fn derive_display(input: TokenStream) -> TokenStream {
     let details_fields = generate_field_display(fields, DisplayMode::Details);
 
     let expanded = quote! {
-        impl #impl_generics crate::display::Display for #name #ty_generics #where_clause {
+        impl #impl_generics display_core::Display for #name #ty_generics #where_clause {
             fn display_summary(&self) -> String {
                 let mut result = Vec::new();
                 #(#summary_fields)*
@@ -100,7 +100,7 @@ fn generate_field_display(
             
             Some(quote! {
                 result.push(format!("{}: {}", #display_name,
-                    <#field_type as crate::display::DisplayValue>::#format_method(&self.#field_name)));
+                    <#field_type as display_core::DisplayValue>::#format_method(&self.#field_name)));
             })
         })
         .collect()
@@ -136,12 +136,19 @@ fn parse_display_attribute(attrs: &[Attribute]) -> Option<DisplayAttribute> {
                         } else if part == "details" {
                             display_attr.details = true;
                             display_attr.details_only = !display_attr.summary;
-                        } else if part.starts_with("name=") {
-                            // 解析 name="value" 格式
-                            if let Some(name_value) = part.strip_prefix("name=") {
+                        } else if part.starts_with("name=") || part.starts_with("name =") {
+                            // 解析 name="value" 或 name = "value" 格式
+                            let name_value = if part.starts_with("name =") {
+                                part.strip_prefix("name =")
+                            } else {
+                                part.strip_prefix("name=")
+                            };
+                            
+                            if let Some(name_value) = name_value {
                                 let name_value = name_value.trim();
                                 if name_value.starts_with('"') && name_value.ends_with('"') {
-                                    display_attr.name = Some(name_value[1..name_value.len()-1].to_string());
+                                    let extracted_name = &name_value[1..name_value.len()-1];
+                                    display_attr.name = Some(extracted_name.to_string());
                                 }
                             }
                         }

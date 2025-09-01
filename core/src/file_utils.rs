@@ -46,14 +46,6 @@ use walkdir::{DirEntry, WalkDir};
 /// - **Unix/Linux/macOS**: 使用标准的文件权限模式
 /// - **Windows**: 尝试移除只读属性，忽略权限模式参数
 /// - **其他平台**: 记录警告日志，不执行实际操作
-///
-/// # 示例
-/// ```rust
-/// use std::path::Path;
-///
-/// let path = Path::new("example.txt");
-/// set_file_permissions(&path, 0o644)?;
-/// ```
 // 无用代码：设置文件权限函数没有被使用
 // fn set_file_permissions(path: &Path, mode: u32) -> Result<()> {
 //     #[cfg(unix)]
@@ -112,14 +104,6 @@ fn is_hidden(entry: &DirEntry) -> bool {
 /// * `path` - 文件的绝对路径
 /// * `size` - 文件大小（字节）
 /// * `modified` - 文件最后修改时间（Unix 时间戳）
-///
-/// # 示例
-/// ```rust
-/// use std::path::Path;
-///
-/// let file_info = FileInfo::new(Path::new("example.txt"))?;
-/// println!("文件大小: {} 字节", file_info.size());
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileInfo {
     path: PathBuf,
@@ -177,15 +161,6 @@ impl FileInfo {
     ///
     /// # 错误
     /// - `Error::CacheNotFound` - 目录不存在或无文件
-    ///
-    /// # 示例
-    /// ```rust
-    /// use std::path::PathBuf;
-    ///
-    /// let path = PathBuf::from("/path/to/cache");
-    /// let files = FileInfo::collect_from(&path)?;
-    /// println!("找到 {} 个文件", files.len());
-    /// ```
     pub fn collect_from(path: &Path) -> Option<Vec<Self>> {
         // 先检查路径是否存在
         if !path.is_dir() {
@@ -477,14 +452,6 @@ pub trait FileFilter: FileGrouper {
     /// - 只对非模式重复文件进行耗时的哈希计算
     /// - 使用并行处理提升性能
     /// - 按大小预过滤减少不必要的计算
-    ///
-    /// # 示例
-    /// ```rust
-    /// use regex::Regex;
-    ///
-    /// let regex = Regex::new(r"_\d+").unwrap(); // 匹配序号后缀
-    /// let duplicates = files.duplicates_by_pattern(&regex);
-    /// ```
     fn duplicates_by_pattern(self, regex: &Regex) -> HashMap<String, Vec<Self::Item>>
     where
         Self: Sized,
@@ -606,12 +573,6 @@ impl crate::display::DisplayValue for FileInfo {
 /// # 缓存目录结构
 /// - macOS: `msg/file` 子目录
 /// - Windows: `FileStorage` 子目录
-///
-/// # 示例
-/// ```rust
-/// let cache_dir = WechatCacheResolver::find_wechat_dirs()?;
-/// println!("微信缓存目录: {}", cache_dir.display());
-/// ```
 pub struct WechatCacheResolver;
 
 impl WechatCacheResolver {
