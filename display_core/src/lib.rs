@@ -58,49 +58,89 @@ impl DisplayValue for std::path::PathBuf {
     fn format_display(&self) -> String {
         self.display().to_string()
     }
+    
+    fn format_display_summary(&self) -> String {
+        self.display().to_string()
+    }
+    
+    fn format_display_details(&self) -> String {
+        self.display().to_string()
+    }
 }
 
 // 为HashMap实现DisplayValue
 impl<K: std::fmt::Debug, V: std::fmt::Debug> DisplayValue for std::collections::HashMap<K, V> {
     fn format_display(&self) -> String {
-        format!("{} entries", self.len())
+        match self.len() {
+            0 => "无数据".to_string(),
+            1 => "1 项".to_string(),
+            n => format!("{} 项", n),
+        }
     }
     
     fn format_display_summary(&self) -> String {
-        format!("{} entries", self.len())
+        match self.len() {
+            0 => "无数据".to_string(),
+            1 => "1 项".to_string(),
+            n => format!("{} 项", n),
+        }
     }
     
     fn format_display_details(&self) -> String {
         if self.is_empty() {
-            "{}".to_string()
+            "  (无内容)".to_string()
         } else {
             let entries: Vec<String> = self.iter()
-                .map(|(k, v)| format!("  {:?}: {:?}", k, v))
+                .enumerate()
+                .map(|(i, (k, v))| {
+                    // 格式化值的显示
+                    let value_str = format!("{:#?}", v)
+                        .lines()
+                        .map(|line| format!("    {}", line))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    
+                    format!("  [{}] 目录: {:?}\n{}", i + 1, k, value_str)
+                })
                 .collect();
-            format!("{{
-{}
-}}", entries.join(",\n"))
+            format!("\n{}", entries.join("\n\n"))
         }
     }
 }
 
 impl<T: std::fmt::Debug> DisplayValue for Vec<T> {
     fn format_display(&self) -> String {
-        format!("{} items", self.len())
+        match self.len() {
+            0 => "无数据".to_string(),
+            1 => "1 项".to_string(),
+            n => format!("{} 项", n),
+        }
     }
     
     fn format_display_summary(&self) -> String {
-        format!("{} items", self.len())
+        match self.len() {
+            0 => "无数据".to_string(),
+            1 => "1 项".to_string(),
+            n => format!("{} 项", n),
+        }
     }
     
     fn format_display_details(&self) -> String {
         if self.is_empty() {
-            "[]".to_string()
+            "  (无内容)".to_string()
         } else {
-            format!("[\n{}\n]", self.iter()
-                .map(|item| format!("  {:?}", item))
-                .collect::<Vec<_>>()
-                .join(",\n"))
+            let items: Vec<String> = self.iter()
+                .enumerate()
+                .map(|(i, item)| {
+                    let item_str = format!("{:#?}", item)
+                        .lines()
+                        .map(|line| format!("    {}", line))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    format!("  [{}]\n{}", i + 1, item_str)
+                })
+                .collect();
+            format!("\n{}", items.join("\n"))
         }
     }
 }
